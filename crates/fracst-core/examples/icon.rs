@@ -6,7 +6,7 @@
 //! `icon.svg` (the PNG wrapped for tools that want SVG) to the output
 //! directory, `assets/` by default.
 
-use fracst_core::{Fixed, FloatExp, INTERIOR, Progress, Renderer, Settings, View, image};
+use fracst_core::{Fixed, FloatExp, Progress, Renderer, Settings, View, image};
 use std::path::PathBuf;
 
 /// Render size; every output size divides it, so downscaling is exact box filtering.
@@ -66,7 +66,7 @@ fn render() -> Vec<u8> {
             let i = (y * BASE + x) as usize;
             // Normalised position, for the background gradient and the mask.
             let (u, v) = ((x as f64 + 0.5) / n, (y as f64 + 0.5) / n);
-            let rgb = if frame.n[i] == INTERIOR {
+            let rgb = if !frame.escaped(i) {
                 INTERIOR_COLOUR
             } else {
                 // Background: deep indigo with a soft violet bloom behind the set,

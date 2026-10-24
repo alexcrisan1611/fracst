@@ -13,6 +13,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Smaller downloads: no debug info or symbol tables in release packages.
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+  CARGO_PROFILE_RELEASE_STRIP: symbols
 
 jobs:
   build:

@@ -33,8 +33,21 @@ pub struct Reference {
     /// then serves any `maxiter` for views whose `spacing * 2^STOP_MARGIN_BITS`
     /// exceeds it.
     pub truncated: Option<FloatExp>,
-    /// The iteration limit it was computed with.
+    /// The iteration limit it was computed (or extended) to.
     pub maxiter: u64,
+    /// Lowest period of a minibrot nucleus within the probe radius given to
+    /// [`Reference::compute`] (ball method: the first `n` with
+    /// `|Z_n| < |dZ_n/dC| * radius`), if the orbit got that far.
+    pub nearby_period: Option<u64>,
+    /// State for continuing the orbit; `None` once it escaped or stopped.
+    state: Option<Continuation>,
+}
+
+struct Continuation {
+    z: FixedOrbit,
+    der: Complex<FloatExp>,
+    stop2: FloatExp,
+    probe2: FloatExp,
 }
 
 impl Reference {
@@ -50,55 +63,106 @@ impl Reference {
     /// pixel spacing is *not* safe: near minibrots the repeated rebasing
     /// errors grow faster than the differences between neighbouring pixels.)
     ///
+    /// Along the way it records the lowest period of a minibrot within
+    /// `probe_radius` (zero to disable) in [`Reference::nearby_period`].
+    ///
     /// Returns `None` if cancelled through `progress`.
-    pub fn compute(re: &Fixed, im: &Fixed, maxiter: u64, spacing: FloatExp, progress: &Progress) -> Option<Reference> {
-        let mut orbit = Vec::with_capacity((maxiter.min(1 << 24) + 1) as usize);
-        let mut tiny = Vec::new();
-        let mut escaped = false;
-        let mut truncated = None;
-        let stop2 = {
-            let s = spacing.ldexp(STOP_MARGIN_BITS);
-            s * s
+    pub fn compute(
+        re: &Fixed,
+        im: &Fixed,
+        maxiter: u64,
+        spacing: FloatExp,
+        probe_radius: FloatExp,
+        progress: &Progress,
+    ) -> Option<Reference> {
+        let square = |x: FloatExp| x * x;
+        let mut r = Reference {
+            re: re.clone(),
+            im: im.clone(),
+            orbit: Vec::with_capacity((maxiter.min(1 << 24) + 1) as usize),
+            tiny: Vec::new(),
+            escaped: false,
+            truncated: None,
+            maxiter: 0,
+            nearby_period: None,
+            state: Some(Continuation {
+                z: FixedOrbit::new(re, im),
+                der: Complex::ZERO,
+                stop2: square(spacing.ldexp(STOP_MARGIN_BITS)),
+                probe2: square(probe_radius),
+            }),
         };
-        let mut der = Complex::<FloatExp>::ZERO;
-        let mut z = FixedOrbit::new(re, im);
+        r.extend(maxiter, progress).then_some(r)
+    }
+
+    /// Whether the orbit is complete for an iteration limit of `maxiter`.
+    pub fn covers(&self, maxiter: u64) -> bool {
+        self.state.is_none() || self.maxiter >= maxiter
+    }
+
+    /// Continue the orbit up to `maxiter` (unless it escaped or stopped).
+    /// Returns `false` if cancelled through `progress`; the orbit then stays
+    /// valid up to `self.maxiter` and can be extended again later.
+    pub fn extend(&mut self, maxiter: u64, progress: &Progress) -> bool {
+        if self.covers(maxiter) && !self.orbit.is_empty() {
+            return true;
+        }
+        let Some(mut st) = self.state.take() else { return true };
         progress.set_total(maxiter);
-        let mut i: u64 = 0;
+        // Index of the orbit value about to be stored.
+        let mut i = self.orbit.len() as u64;
+        if i > 0 {
+            // The stored state is Z_{i-1}; advance it to Z_i.
+            st.z.step();
+        }
         loop {
-            let zfe = z.z_fe();
+            let zfe = st.z.z_fe();
             let (fr, fi) = (zfe.re.to_f64(), zfe.im.to_f64());
             if fr.abs().max(fi.abs()) < TINY {
-                tiny.push((orbit.len(), zfe));
-                orbit.push(Complex::new(0.0, 0.0));
+                self.tiny.push((self.orbit.len(), zfe));
+                self.orbit.push(Complex::new(0.0, 0.0));
             } else {
                 // Flush a subnormal component; it is negligible next to the other one.
                 let flush = |v: f64| if v.abs() < TINY { 0.0 } else { v };
-                orbit.push(Complex::new(flush(fr), flush(fi)));
+                self.orbit.push(Complex::new(flush(fr), flush(fi)));
             }
             if fr * fr + fi * fi > REF_BAILOUT2 {
-                escaped = true;
+                self.escaped = true;
                 break;
             }
-            if i > 0 && zfe.norm() < der.norm() * stop2 {
-                truncated = Some(zfe.abs() / der.abs());
-                break;
+            if i > 0 {
+                let (z2, d2) = (zfe.norm(), st.der.norm());
+                if self.nearby_period.is_none() && z2 < d2 * st.probe2 {
+                    self.nearby_period = Some(i);
+                }
+                if z2 < d2 * st.stop2 {
+                    self.truncated = Some(zfe.abs() / st.der.abs());
+                    break;
+                }
             }
-            der = zfe.mul2() * der + Complex::ONE;
-            if i == maxiter {
-                break;
+            st.der = zfe.mul2() * st.der + Complex::ONE;
+            if i >= maxiter {
+                self.maxiter = i;
+                self.state = Some(st);
+                progress.done.store(i, Ordering::Relaxed);
+                return true;
             }
             if i & 0xfff == 0 {
                 if progress.cancelled() {
-                    return None;
+                    self.maxiter = i;
+                    self.state = Some(st);
+                    return false;
                 }
                 progress.done.store(i, Ordering::Relaxed);
             }
-            z.step();
+            st.z.step();
             i += 1;
         }
+        // Escaped or stopped: the orbit is final.
         progress.done.store(i, Ordering::Relaxed);
-        orbit.shrink_to_fit();
-        Some(Reference { re: re.clone(), im: im.clone(), orbit, tiny, escaped, truncated, maxiter })
+        self.maxiter = self.maxiter.max(maxiter).max(i);
+        self.orbit.shrink_to_fit();
+        true
     }
 
     /// Index of the last stored orbit value; pixels rebase when they reach it.
@@ -216,6 +280,7 @@ mod tests {
             &Fixed::from_f64(ci, 4),
             1000,
             FloatExp::ZERO,
+            FloatExp::ZERO,
             &Progress::default(),
         )
         .unwrap();
@@ -236,11 +301,25 @@ mod tests {
             &Fixed::from_f64(0.1, 3),
             500,
             FloatExp::ZERO,
+            FloatExp::ZERO,
             &Progress::default(),
         )
         .unwrap();
         assert!(!r.escaped);
         assert_eq!(r.last_index(), 500);
+        assert!(r.covers(500) && !r.covers(501));
+    }
+
+    #[test]
+    fn extending_matches_computing_at_once() {
+        let p = Progress::default();
+        let (re, im) = (Fixed::from_f64(-0.1, 3), Fixed::from_f64(0.1, 3));
+        let mut a = Reference::compute(&re, &im, 300, FloatExp::ZERO, FloatExp::ZERO, &p).unwrap();
+        assert!(a.extend(800, &p));
+        let b = Reference::compute(&re, &im, 800, FloatExp::ZERO, FloatExp::ZERO, &p).unwrap();
+        assert_eq!(a.last_index(), 800);
+        assert_eq!(a.last_index(), b.last_index());
+        assert!((0..=800).all(|m| a.z(m) == b.z(m)));
     }
 
     #[test]
@@ -248,8 +327,9 @@ mod tests {
         let n = 4;
         let p = Progress::default();
         let (cr, ci) = crate::newton::find_nucleus(&Fixed::from_f64(-1.75, n), &Fixed::zero(n), 3, 50, &p).unwrap();
-        let r = Reference::compute(&cr, &ci, 1000, FloatExp::from(1e-6), &p).unwrap();
+        let r = Reference::compute(&cr, &ci, 1000, FloatExp::from(1e-6), FloatExp::from(0.01), &p).unwrap();
         assert_eq!(r.last_index(), 3);
         assert!(r.truncated.is_some() && !r.escaped);
+        assert_eq!(r.nearby_period, Some(3));
     }
 }

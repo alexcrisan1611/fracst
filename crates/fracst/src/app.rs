@@ -37,7 +37,6 @@ pub struct App {
     /// A non-render task (minibrot search, export) that holds off rendering.
     blocking: Option<(u64, &'static str)>,
     last_render_secs: f64,
-    auto_iterations: bool,
     resolution_scale: f32,
     zoom_factor: f64,
     minibrot_fill: f64,
@@ -59,7 +58,7 @@ impl App {
         App {
             worker: Worker::spawn(cc.egui_ctx.clone()),
             view: View::default(),
-            settings: Settings::default(),
+            settings: Settings { auto_iterations: true, ..Settings::default() },
             colouring: Colouring::default(),
             shown: None,
             texture: None,
@@ -68,7 +67,6 @@ impl App {
             render_id: 0,
             blocking: None,
             last_render_secs: 0.0,
-            auto_iterations: true,
             resolution_scale: 1.0,
             zoom_factor: 4.0,
             minibrot_fill: 0.25,
@@ -96,15 +94,15 @@ impl App {
                     if !preview {
                         self.worker.finished(msg.id);
                         self.last_render_secs = frame.stats.total.as_secs_f64();
-                        let st = &frame.stats;
-                        // Raise the limit while boundary pixels are still hitting it.
-                        if self.auto_iterations
-                            && view == self.view
-                            && st.interior > 0
-                            && st.max_escaped.saturating_mul(2) > view.maxiter
-                            && view.maxiter < 1 << 30
-                        {
-                            self.view.maxiter = (view.maxiter * 2).min(1 << 30);
+                        // Start the next frame from the limit this one suggests. The
+                        // frame on screen is already complete, so don't re-render it.
+                        let suggested = frame.stats.suggested_maxiter;
+                        let same_place = View { maxiter: self.view.maxiter, ..view.clone() } == self.view;
+                        if self.settings.auto_iterations && same_place && suggested != self.view.maxiter {
+                            self.view.maxiter = suggested;
+                            if let Some((requested, _)) = &mut self.requested {
+                                requested.maxiter = suggested;
+                            }
                         }
                     }
                     self.shown = Some(Shown { view, frame, preview });
@@ -319,8 +317,9 @@ impl App {
             ui.add(Slider::new(&mut self.minibrot_fill, 0.001..=2.0).logarithmic(true).text("fill"))
                 .on_hover_text("How large the minibrot appears (1 = full height)");
         });
-        ui.checkbox(&mut self.auto_iterations, "Auto iterations")
-            .on_hover_text("Double the iteration limit while boundary pixels still reach it");
+        ui.checkbox(&mut self.settings.auto_iterations, "Auto iterations").on_hover_text(
+            "Choose the iteration limit per frame: enough for any minibrot near the view,              raised when pixels are cut off, lowered again when the view needs less",
+        );
     }
 
     fn colour_ui(&mut self, ui: &mut egui::Ui) {
@@ -409,6 +408,9 @@ impl App {
         ui.add(Slider::new(&mut self.settings.bailout, 2.0..=1e6).logarithmic(true).text("bailout"));
         ui.checkbox(&mut self.settings.interior_detection, "Interior detection")
             .on_hover_text("Stop iterating pixels that are attracted to a cycle (big win inside minibrots)");
+        ui.checkbox(&mut self.settings.periodic_reference, "Snap reference to nearby minibrot").on_hover_text(
+            "Use the nucleus of a minibrot near the view as the reference: its orbit stops after one period",
+        );
         ui.checkbox(&mut self.settings.reuse_reference, "Reuse reference orbit while nearby");
         ui.checkbox(&mut self.view.imag_down, "Imaginary axis points down (KF2)");
     }
@@ -465,6 +467,13 @@ impl App {
             row("Frame", format!("{}×{}{}", f.width, f.height, if shown.preview { " (preview)" } else { "" }));
             row("Total", format!("{:.3} s", st.total.as_secs_f64()));
             row(
+                "Iteration limit",
+                if st.rounds > 1 { format!("{} ({} passes)", f.maxiter, st.rounds) } else { f.maxiter.to_string() },
+            );
+            if let Some(p) = st.nearby_period {
+                row("Nearby minibrot", format!("period {p}"));
+            }
+            row(
                 "Reference",
                 if st.reference_reused {
                     format!("reused, {} iters", st.reference_len)
@@ -473,7 +482,13 @@ impl App {
                         "{:.3} s, {} iters{}",
                         st.reference.as_secs_f64(),
                         st.reference_len,
-                        if st.reference_truncated { " (stopped early)" } else { "" }
+                        if st.reference_on_nucleus {
+                            " (on nucleus)"
+                        } else if st.reference_truncated {
+                            " (stopped early)"
+                        } else {
+                            ""
+                        }
                     )
                 },
             );
@@ -489,6 +504,9 @@ impl App {
                 row("Escaped", format!("{} … {}", st.min_escaped, st.max_escaped));
             }
             row("Interior", format!("{:.1}%", 100.0 * st.interior as f64 / px));
+            if st.undecided > 0 {
+                row("Reached limit", format!("{:.2}%", 100.0 * st.undecided as f64 / px));
+            }
         });
     }
 

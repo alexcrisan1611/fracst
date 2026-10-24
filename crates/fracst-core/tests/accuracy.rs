@@ -1,7 +1,7 @@
 //! Compare rendered iteration counts against brute-force high-precision
 //! iteration of individual pixels.
 
-use fracst_core::{Fixed, FloatExp, Frame, INTERIOR, Progress, Renderer, Settings, View, newton};
+use fracst_core::{Fixed, FloatExp, Frame, Progress, Renderer, Settings, View, newton};
 
 /// Escape iteration of `c` by direct fixed-point iteration (None if it stays bounded).
 fn direct(cr: &Fixed, ci: &Fixed, maxiter: u64, bailout2: f64) -> Option<u64> {
@@ -38,7 +38,7 @@ fn compare(view: &View, s: &Settings, frame: &Frame, stride: usize) -> f64 {
             let expect = direct(&cr, &ci, view.maxiter, s.bailout * s.bailout);
             let i = y * s.width as usize + x;
             // The renderer stores floor(smooth count), which is the escape iteration or one below it.
-            let got = (frame.n[i] != INTERIOR).then(|| frame.n[i] as u64);
+            let got = frame.escaped(i).then(|| frame.n[i] as u64);
             let ok = match (expect, got) {
                 (Some(e), Some(g)) => g == e || g + 1 == e,
                 (None, None) => true,
@@ -55,19 +55,20 @@ fn compare(view: &View, s: &Settings, frame: &Frame, stride: usize) -> f64 {
 }
 
 fn settings(bla: bool) -> Settings {
-    Settings { width: 96, height: 64, bla, ..Settings::default() }
+    Settings { width: 96, height: 64, bla, periodic_reference: false, ..Settings::default() }
 }
 
 fn check(view: &View, stride: usize, min_interior: f64) {
-    for bla in [false, true] {
-        let s = settings(bla);
+    // Plain perturbation, BLA, and BLA with the reference snapped to a nearby nucleus.
+    for (bla, snap) in [(false, false), (true, false), (true, true)] {
+        let s = Settings { periodic_reference: snap, ..settings(bla) };
         let frame = render(view, &s);
-        let interior = frame.stats.interior as f64 / (s.width * s.height) as f64;
+        let interior = (frame.stats.interior + frame.stats.undecided) as f64 / (s.width * s.height) as f64;
         assert!(interior >= min_interior, "expected interior pixels, got {:.1}%", 100.0 * interior);
         let bad = compare(view, &s, &frame, stride);
         assert!(
             bad <= 0.01,
-            "zoom {} bla={bla}: {:.2}% of pixels wrong ({})",
+            "zoom {} bla={bla} snap={snap}: {:.2}% of pixels wrong ({})",
             view.zoom,
             100.0 * bad,
             frame.stats.mode

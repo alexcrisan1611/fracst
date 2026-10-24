@@ -36,7 +36,8 @@ number types past 1e300 zoom. fracst uses newer techniques:
 |---|---|---|
 | Skipping iterations | Series approximation (start of the orbit only) | **Bilinear approximation** (BLA): skips anywhere along the orbit, in steps of up to 2^k iterations |
 | Glitches | Detect, add references, re-render | **Rebasing**: one reference orbit, no glitches by construction |
-| Reference length | Always up to the iteration limit | **Stops after one period** when the centre is on a minibrot nucleus |
+| Reference length | Always up to the iteration limit | **Snaps to a nearby minibrot's nucleus** and stops after one period |
+| Iteration limit | Manual, or an auto mode that loses detail near minibrots | **Predicted from nearby minibrots**, corrected per frame (see below) |
 | Interior pixels | Iterated to the limit | **Interior detection** stops once a pixel is attracted to a cycle |
 | Past 1e300 | `long double` / `floatexp` for the whole pixel | Extended range (shared-exponent complex) **only while the offset is tiny**, then plain `f64` |
 | Reference orbit | MPFR | Custom fixed-point bignum (squarings only, truncated products) |
@@ -46,6 +47,33 @@ written up by Claude Heiland-Allen in [deep zoom theory and practice](https://ma
 and used in his [Fraktaler 3](https://fraktaler.mathr.co.uk/). fracst
 implements these published algorithms independently and contains no code from
 KF2 or Fraktaler 3.
+
+## Automatic iterations
+
+A fixed iteration limit is either too low near minibrots, so their surroundings
+render as solid interior (KF2's auto mode often loses detail this way), or
+wastefully high elsewhere. With **Auto iterations** (on by default in the
+explorer, `--auto-iterations` in the CLI) fracst picks the limit for each frame:
+
+1. **Predict.** While computing the reference orbit, a ball test finds the
+   lowest-period minibrot within a few view radii. Pixels around it escape at
+   multiples of its period P, so the limit starts at 8·P or more. Without one,
+   it starts from the previous frame's suggestion, but never below a floor that
+   grows gently with zoom.
+2. **Correct.** Pixels that reach the limit without escaping, and without being
+   detected as interior, are *undecided*. Suppose many pixels escaped just under
+   the limit, or undecided pixels make up more than a thin rim around the
+   interior. Then the limit is raised ×4 and only the undecided pixels are
+   rendered again. A round that resolves fewer than half of them ends the
+   escalation, because what remains converges too slowly to be worth chasing.
+3. **Suggest.** The next frame starts from twice the escape time of all but the
+   slowest 0.01% of pixels. A few stragglers next to the boundary therefore
+   cannot ratchet the limit up, and it falls again when a view needs less.
+
+Two more things help. When a minibrot is near, the reference moves onto its
+nucleus (found with Newton's method). Its orbit then stops after one period.
+Interior detection measures the cycle multiplier at each period end, which is
+reliable even for deep minibrots.
 
 ## Benchmarks
 

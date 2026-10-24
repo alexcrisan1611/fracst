@@ -3,7 +3,7 @@
 //! (transferred) smooth iteration count divided by `iter_div`, plus KF2's
 //! neighbour-difference "slopes" shading.
 
-use crate::render::{Frame, INTERIOR};
+use crate::render::Frame;
 use rayon::prelude::*;
 use std::f64::consts::{FRAC_PI_2, PI};
 
@@ -222,7 +222,7 @@ impl Colouring {
         out.par_chunks_mut(w * 4).enumerate().for_each(|(y, row)| {
             for x in 0..w {
                 let i = y * w + x;
-                let mut rgb = if frame.n[i] == INTERIOR {
+                let mut rgb = if !frame.escaped(i) {
                     interior
                 } else {
                     let m = frame.n[i] as f64 + if self.flat { 0.0 } else { frame.frac[i] as f64 };

@@ -109,6 +109,7 @@ fn run(jobs: Receiver<Request>, done: Sender<Message>, ctx: eframe::egui::Contex
         };
         match req.task {
             Task::Render { view, settings, preview } => {
+                let mut hint = None;
                 if preview {
                     let small = Settings {
                         width: (settings.width / 4).max(1),
@@ -116,6 +117,8 @@ fn run(jobs: Receiver<Request>, done: Sender<Message>, ctx: eframe::egui::Contex
                         ..settings.clone()
                     };
                     if let Some(frame) = renderer.render(&view, &small, &req.progress) {
+                        // With automatic iterations the full pass can start where the preview ended.
+                        hint = settings.auto_iterations.then_some(frame.maxiter);
                         send(Outcome::Frame { view: view.clone(), frame: Box::new(frame), preview: true });
                     }
                     // A newer request makes the full-resolution pass pointless.
@@ -124,13 +127,15 @@ fn run(jobs: Receiver<Request>, done: Sender<Message>, ctx: eframe::egui::Contex
                         continue;
                     }
                 }
-                if let Some(frame) = renderer.render(&view, &settings, &req.progress) {
+                let full = View { maxiter: hint.unwrap_or(view.maxiter), ..view.clone() };
+                if let Some(frame) = renderer.render(&full, &settings, &req.progress) {
                     send(Outcome::Frame { view, frame: Box::new(frame), preview: false });
                 }
             }
             Task::FindMinibrot { view, height, fill } => {
                 let radius = view.pixel_spacing(height) * FloatExp::from(height as f64 / 2.0);
-                let maxperiod = view.maxiter.max(1000);
+                // The probe orbit stops when it escapes, so a generous bound is cheap.
+                let maxperiod = view.maxiter.max(1 << 24);
                 let result = match newton::find_minibrot(&view.re, &view.im, radius, maxperiod, &req.progress) {
                     Some(n) => {
                         let mut v = view.clone();

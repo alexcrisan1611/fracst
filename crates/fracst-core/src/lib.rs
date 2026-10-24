@@ -24,7 +24,7 @@ pub mod view;
 pub use colour::{Colouring, Palette, Slopes, Transfer};
 pub use fixed::Fixed;
 pub use floatexp::FloatExp;
-pub use render::{Frame, INTERIOR, Renderer, Settings, Stats};
+pub use render::{Frame, INTERIOR, Renderer, Settings, Stats, UNDECIDED, auto_floor};
 pub use view::View;
 
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};

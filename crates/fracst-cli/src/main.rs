@@ -33,6 +33,15 @@ struct Args {
     /// Disable bilinear approximation (plain perturbation).
     #[arg(long)]
     no_bla: bool,
+    /// Choose the iteration limit automatically (the file's or --iterations
+    /// value is the starting point): enough for minibrots near the view,
+    /// raised when pixels are cut off.
+    #[arg(long)]
+    auto_iterations: bool,
+    /// Keep the reference at the view centre instead of snapping it to a
+    /// nearby minibrot nucleus.
+    #[arg(long)]
+    no_snap: bool,
     /// Disable interior detection (iterate interior pixels to the limit).
     #[arg(long)]
     no_interior: bool,
@@ -105,7 +114,9 @@ fn run(args: Args) -> Result<(), String> {
     if args.find_minibrot {
         let t = Instant::now();
         let radius = view.pixel_spacing(args.height) * FloatExp::from(args.height as f64 / 2.0);
-        let nucleus = newton::find_minibrot(&view.re, &view.im, radius, view.maxiter, &Progress::default())
+        // The probe orbit stops when it escapes, so a generous period bound is cheap.
+        let maxperiod = if args.auto_iterations { view.maxiter.max(1 << 24) } else { view.maxiter };
+        let nucleus = newton::find_minibrot(&view.re, &view.im, radius, maxperiod, &Progress::default())
             .ok_or("no minibrot found in view")?;
         println!("minibrot: period {} size {:.3} ({:.3}s)", nucleus.period, nucleus.size, t.elapsed().as_secs_f64());
         view.re = nucleus.re;
@@ -119,6 +130,8 @@ fn run(args: Args) -> Result<(), String> {
         bla: !args.no_bla,
         bla_epsilon: 0.5f64.powi(args.bla_bits as i32),
         interior_detection: !args.no_interior,
+        auto_iterations: args.auto_iterations,
+        periodic_reference: !args.no_snap,
         distance_estimate: args.de,
         ..Settings::default()
     };
@@ -173,6 +186,21 @@ fn run(args: Args) -> Result<(), String> {
         st.max_escaped,
         100.0 * st.interior as f64 / pixels,
     );
+    println!(
+        "iterations: limit {} ({} pass{}){}{}",
+        frame.maxiter,
+        st.rounds,
+        if st.rounds == 1 { "" } else { "es" },
+        st.nearby_period.map(|p| format!(", minibrot of period {p} nearby")).unwrap_or_default(),
+        if settings.auto_iterations {
+            format!(", next frame would start at {}", st.suggested_maxiter)
+        } else {
+            String::new()
+        },
+    );
+    if settings.auto_iterations {
+        view.maxiter = frame.maxiter;
+    }
 
     let rgba = image::downscale(&colouring.apply(&frame), frame.width, frame.height, ss);
     let comment = kfr::to_string(&view, &colouring);
@@ -216,6 +244,9 @@ fn zoom_out(
             path.display()
         );
         view.zoom = view.zoom / FloatExp::from(args.zoom_out_factor);
+        if settings.auto_iterations {
+            view.maxiter = frame.stats.suggested_maxiter;
+        }
     }
     println!("total {:.2}s", started.elapsed().as_secs_f64());
     Ok(())

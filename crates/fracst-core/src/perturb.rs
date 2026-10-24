@@ -25,15 +25,24 @@ use crate::reference::Reference;
 /// 2^-1000 is negligible next to them.
 const SWITCH_NORM: f64 = f64::from_bits((1023 - 960) << 52);
 
-/// `|dz_n / dz_k|^2` below which a pixel counts as interior (Fraktaler 3's
-/// default inscape radius of 1/1024, there with `k = 1`).
+/// Interior detection threshold on the squared derivative of the orbit with
+/// respect to an earlier iterate (Fraktaler 3's inscape radius of 1/1024).
 pub const INTERIOR_RADIUS2: f64 = 1.0 / (1024.0 * 1024.0);
 
-/// With high iteration limits, interior detection starts tracking `dz_n /
-/// dz_k` only at the first rebase after iteration `INTERIOR_START`, so most
-/// exterior pixels escape without paying for the extra derivative. The start
-/// must be a rebase onto `Z_0` (where `z` is near zero, like `z_0`): starting
-/// mid-period lets exterior orbits dip below the threshold as they pass zero.
+/// Interior detection comes in two flavours:
+///
+/// * With a periodic reference (centred on a minibrot nucleus), every pixel
+///   rebases at the end of each period. From the first period end after
+///   `INTERIOR_START` the derivative is accumulated and checked only at
+///   period ends, where it is the cycle multiplier `lambda^k`; two
+///   consecutive checks below the threshold mean the pixel is attracted to
+///   the cycle. Checking only whole periods matters: mid-period, exterior
+///   orbits dip far below the threshold as they pass near zero, and deep
+///   minibrots grow the derivative by huge factors before it settles.
+/// * Otherwise, as in Fraktaler 3, `|dz_n/dz_1|` is checked every iteration.
+///   With high limits pixels first run to `INTERIOR_START` without it; only
+///   those still going restart from `z_1` with it (cheap with BLA), so most
+///   exterior pixels never pay for the extra derivative.
 const INTERIOR_START: u64 = 4096;
 
 /// Rescaling of `dz_n/dz_1` in `f64`, which can exceed the range of doubles.
@@ -76,10 +85,14 @@ pub struct Extras {
 struct State<C: Cplx> {
     dz: C,
     der: C,
-    /// `dz_n/dz_k`, times `2^dw_exp`, once `dw_active`.
+    /// Derivative for interior detection, times `2^dw_exp`, once `dw_active`.
     dw: C,
     dw_exp: i32,
     dw_active: bool,
+    /// Consecutive period ends with `dw` below the threshold.
+    dw_below: u8,
+    /// Period-end detection activates at the first period end from here.
+    dw_start: u64,
     m: usize,
     n: u64,
     steps: u64,
@@ -87,9 +100,21 @@ struct State<C: Cplx> {
 
 impl<C: Cplx> State<C> {
     /// The state after the first iteration: `z_1 = c`, so `dz_1 = dc`.
-    fn start(dc: C, spacing: C::R, maxiter: u64) -> Self {
-        let dw_active = maxiter <= 2 * INTERIOR_START;
-        State { dz: dc, der: C::from_real(spacing), dw: C::ONE, dw_exp: 0, dw_active, m: 1, n: 1, steps: 0 }
+    /// `dw_active` starts on for per-iteration (`z_1`-based) detection and
+    /// off for the period-end flavour, which activates later.
+    fn start(dc: C, spacing: C::R, dw_active: bool, maxiter: u64) -> Self {
+        State {
+            dz: dc,
+            der: C::from_real(spacing),
+            dw: C::ONE,
+            dw_exp: 0,
+            dw_active,
+            dw_below: 0,
+            dw_start: if maxiter > 2 * INTERIOR_START { INTERIOR_START } else { 0 },
+            m: 1,
+            n: 1,
+            steps: 0,
+        }
     }
 
     fn cast<D: Cplx>(&self) -> State<D> {
@@ -104,6 +129,8 @@ impl<C: Cplx> State<C> {
             dw: D::from_cfe(dw),
             dw_exp: self.dw_exp + shift,
             dw_active: self.dw_active,
+            dw_below: self.dw_below,
+            dw_start: self.dw_start,
             m: self.m,
             n: self.n,
             steps: self.steps,
@@ -129,13 +156,11 @@ fn run<C: Cplx, const DE: bool, const INSIDE: bool, const UP: bool, const DOWN: 
 ) -> Exit {
     let mref = reference.last_index();
     let periodic = reference.truncated.is_some();
-    let State { mut dz, mut der, mut dw, mut dw_exp, mut dw_active, mut m, mut n, mut steps } = *st;
+    let State { mut dz, mut der, mut dw, mut dw_exp, mut dw_active, mut dw_below, dw_start, mut m, mut n, mut steps } =
+        *st;
     let ir2 = C::R::from_f64(INTERIOR_RADIUS2);
     let (dw_big, dw_small) = (C::R::from_f64(DW_BIG), C::R::from_f64(DW_SMALL));
     let mut zm = z_at(m);
-    // Set on activation: measure from the iterate *after* the near-zero one
-    // (like starting at z_1 rather than z_0), skipping its tiny factor 2z.
-    let mut dw_fresh = false;
     let exit = loop {
         let mut z = zm + dz;
         let zn = z.norm();
@@ -144,11 +169,18 @@ fn run<C: Cplx, const DE: bool, const INSIDE: bool, const UP: bool, const DOWN: 
             break Exit::Escaped(z.to_c64());
         }
         if zn < dzn || m == mref {
-            if INSIDE && !dw_active && n >= INTERIOR_START && (zn < dzn || periodic) {
-                dw_active = true;
-                dw_fresh = true;
-                dw = C::ONE;
-                dw_exp = 0;
+            if INSIDE && periodic && m == mref {
+                // End of a period of the reference cycle.
+                if dw_active {
+                    dw_below = if dw_exp <= 0 && dw.norm() < ir2 { dw_below + 1 } else { 0 };
+                    if dw_below >= 2 {
+                        break Exit::Stopped;
+                    }
+                } else if n >= dw_start {
+                    dw_active = true;
+                    dw = C::ONE;
+                    dw_exp = 0;
+                }
             }
             dz = z;
             dzn = zn;
@@ -164,7 +196,7 @@ fn run<C: Cplx, const DE: bool, const INSIDE: bool, const UP: bool, const DOWN: 
         }
         if INSIDE && dw_active {
             let dwn = dw.norm();
-            if dw_exp == 0 && dwn < ir2 {
+            if !periodic && dw_exp == 0 && dwn < ir2 {
                 break Exit::Stopped;
             }
             if dwn > dw_big {
@@ -192,11 +224,7 @@ fn run<C: Cplx, const DE: bool, const INSIDE: bool, const UP: bool, const DOWN: 
                 der = z2 * der + C::from_real(p.spacing);
             }
             if INSIDE && dw_active {
-                if dw_fresh {
-                    dw_fresh = false;
-                } else {
-                    dw = z2 * dw;
-                }
+                dw = z2 * dw;
             }
             dz = (zm.mul2() + dz) * dz + p.dc;
             m += 1;
@@ -204,7 +232,7 @@ fn run<C: Cplx, const DE: bool, const INSIDE: bool, const UP: bool, const DOWN: 
         }
         zm = z_at(m);
     };
-    *st = State { dz, der, dw, dw_exp, dw_active, m, n, steps };
+    *st = State { dz, der, dw, dw_exp, dw_active, dw_below, dw_start, m, n, steps };
     exit
 }
 
@@ -238,8 +266,20 @@ fn iterate_f64_impl<const DE: bool, const INSIDE: bool>(
     p: &Phase<Complex<f64>>,
     maxiter: u64,
 ) -> PixelResult {
-    let mut st = State::start(p.dc, p.spacing, maxiter);
-    let exit = run::<_, DE, INSIDE, false, false>(reference, |m| reference.z(m), p, &mut st, maxiter);
+    let z_at = |m| reference.z(m);
+    let periodic = reference.truncated.is_some();
+    let mut steps = 0;
+    if INSIDE && !periodic && maxiter > 2 * INTERIOR_START {
+        let mut st = State::start(p.dc, p.spacing, false, maxiter);
+        let exit = run::<_, DE, false, false, false>(reference, z_at, p, &mut st, INTERIOR_START);
+        if !matches!(exit, Exit::Stopped) {
+            return finish(&st, exit, 0);
+        }
+        steps = st.steps;
+    }
+    let mut st = State::start(p.dc, p.spacing, !periodic, maxiter);
+    st.steps = steps;
+    let exit = run::<_, DE, INSIDE, false, false>(reference, z_at, p, &mut st, maxiter);
     finish(&st, exit, 0)
 }
 
@@ -261,8 +301,18 @@ fn iterate_deep_impl<const DE: bool, const INSIDE: bool>(
     shallow: &Phase<Complex<f64>>,
     maxiter: u64,
 ) -> PixelResult {
-    let mut st = Hybrid::Deep(State::start(deep.dc, deep.spacing, maxiter));
+    let periodic = reference.truncated.is_some();
     let mut deep_steps = 0;
+    let mut steps = 0;
+    if INSIDE && !periodic && maxiter > 2 * INTERIOR_START {
+        let mut st = Hybrid::Deep(State::start(deep.dc, deep.spacing, false, maxiter));
+        let exit = run_hybrid::<DE, false>(reference, deep, shallow, &mut st, INTERIOR_START, &mut deep_steps);
+        if !matches!(exit, Exit::Stopped) {
+            return st.finish(exit, deep_steps);
+        }
+        steps = st.steps();
+    }
+    let mut st = Hybrid::Deep(State { steps, ..State::start(deep.dc, deep.spacing, !periodic, maxiter) });
     let exit = run_hybrid::<DE, INSIDE>(reference, deep, shallow, &mut st, maxiter, &mut deep_steps);
     st.finish(exit, deep_steps)
 }
@@ -274,6 +324,13 @@ enum Hybrid {
 }
 
 impl Hybrid {
+    fn steps(&self) -> u64 {
+        match self {
+            Hybrid::Deep(s) => s.steps,
+            Hybrid::Shallow(s) => s.steps,
+        }
+    }
+
     fn finish(&self, exit: Exit, deep_steps: u64) -> PixelResult {
         match self {
             Hybrid::Deep(s) => finish(s, exit, deep_steps),
