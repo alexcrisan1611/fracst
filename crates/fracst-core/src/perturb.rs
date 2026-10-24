@@ -19,7 +19,6 @@ use crate::bla::BlaTable;
 use crate::floatexp::FloatExp;
 use crate::num::{CExp, Complex, Cplx, Real};
 use crate::reference::Reference;
-use std::sync::OnceLock;
 
 /// `|dz|^2` above which a deep pixel switches to `f64` (`|dz| > 2^-480`). At
 /// that size `dz^2` and `2 Z dz` stay normal doubles, and a dropped `dc` below
@@ -54,20 +53,6 @@ const DW_STEP: i32 = 300;
 /// `|Z_m|^2` above which an orbit value dwarfs any extended-range `dz`
 /// (`|dz| <= 2^-480`), so `Z_m + dz` cannot trigger a rebase.
 const ORDINARY_NORM: f64 = f64::from_bits((1023 - 900) << 52);
-
-/// Dev-only experiment switch for comparing extended-range variants:
-/// `FRACST_DEEP=baseline` (orbit converted per step), `orbit` (precomputed
-/// orbit), `fast` (plus the exact fast path and lean interior detection) or
-/// `top` (plus longest-first BLA lookups; default).
-fn deep_variant() -> u8 {
-    static VARIANT: OnceLock<u8> = OnceLock::new();
-    *VARIANT.get_or_init(|| match std::env::var("FRACST_DEEP").as_deref() {
-        Ok("baseline") => 0,
-        Ok("orbit") => 1,
-        Ok("fast") => 2,
-        _ => 3,
-    })
-}
 
 /// Per-type constants of one iteration phase.
 pub struct Phase<'a, C: Cplx> {
@@ -166,14 +151,14 @@ enum Exit {
 /// Iterate until escape, `maxiter`, interior, or (if `UP`/`DOWN`) `|dz|^2`
 /// crossing `switch2`.
 ///
-/// `DEEP` selects extended-range optimisations (0 = none; see
-/// [`deep_variant`]). With `DEEP >= 2`, `zn_at(m)` gives `|Z_m|^2` in
-/// `f64`. While `|dz|^2 <= switch2` and `Z_m` is neither tiny nor near the
-/// bailout, `Z_m + dz` can neither escape nor rebase, so those tests (and
-/// the extended-range sum and norm behind them) are skipped. The results
-/// are the same either way.
+/// `DEEP` enables the extended-range optimisations, with `zn_at(m)` giving
+/// `|Z_m|^2` in `f64`. While `|dz|^2 <= switch2` and `Z_m` is neither tiny
+/// nor near the bailout, `Z_m + dz` can neither escape nor rebase, so those
+/// tests (and the extended-range sum and norm behind them) are skipped; and
+/// BLA lookups search from the longest step down, as long skips are the
+/// norm while `dz` is tiny. The results are the same either way.
 #[inline(always)]
-fn run<C: Cplx, const DE: bool, const INSIDE: bool, const UP: bool, const DOWN: bool, const DEEP: u8>(
+fn run<C: Cplx, const DE: bool, const INSIDE: bool, const UP: bool, const DOWN: bool, const DEEP: bool>(
     reference: &Reference,
     z_at: impl Fn(usize) -> C,
     zn_at: impl Fn(usize) -> f64,
@@ -183,7 +168,7 @@ fn run<C: Cplx, const DE: bool, const INSIDE: bool, const UP: bool, const DOWN: 
 ) -> Exit {
     let mref = reference.last_index();
     let periodic = reference.truncated.is_some();
-    let fast_path = DEEP >= 2;
+    let fast_path = DEEP;
     let State { mut dz, mut der, mut dw, mut dw_exp, mut dw_active, mut dw_below, dw_start, mut m, mut n, mut steps } =
         *st;
     let ir2 = C::R::from_f64(INTERIOR_RADIUS2);
@@ -252,7 +237,7 @@ fn run<C: Cplx, const DE: bool, const INSIDE: bool, const UP: bool, const DOWN: 
             }
         }
         steps += 1;
-        let bla = if DEEP >= 3 { p.bla.lookup_longest(m, dzn, maxiter - n) } else { p.bla.lookup(m, dzn, maxiter - n) };
+        let bla = if DEEP { p.bla.lookup_longest(m, dzn, maxiter - n) } else { p.bla.lookup(m, dzn, maxiter - n) };
         if let Some(b) = bla {
             dz = b.a * dz + b.b * p.dc;
             if DE {
@@ -318,7 +303,7 @@ fn iterate_f64_impl<const DE: bool, const INSIDE: bool>(
     let mut steps = 0;
     if INSIDE && !periodic && maxiter > 2 * INTERIOR_START {
         let mut st = State::start(p.dc, p.spacing, false, maxiter);
-        let exit = run::<_, DE, false, false, false, 0>(reference, z_at, |_| 0.0, p, &mut st, INTERIOR_START);
+        let exit = run::<_, DE, false, false, false, false>(reference, z_at, |_| 0.0, p, &mut st, INTERIOR_START);
         if !matches!(exit, Exit::Stopped) {
             return finish(&st, exit, 0);
         }
@@ -326,7 +311,7 @@ fn iterate_f64_impl<const DE: bool, const INSIDE: bool>(
     }
     let mut st = State::start(p.dc, p.spacing, !periodic, maxiter);
     st.steps = steps;
-    let exit = run::<_, DE, INSIDE, false, false, 0>(reference, z_at, |_| 0.0, p, &mut st, maxiter);
+    let exit = run::<_, DE, INSIDE, false, false, false>(reference, z_at, |_| 0.0, p, &mut st, maxiter);
     finish(&st, exit, 0)
 }
 
@@ -338,16 +323,11 @@ pub fn iterate_deep(
     maxiter: u64,
     extras: Extras,
 ) -> PixelResult {
-    match deep_variant() {
-        0 => dispatch!(extras, iterate_deep_impl::<_, _, 0>(reference, deep, shallow, maxiter)),
-        1 => dispatch!(extras, iterate_deep_impl::<_, _, 1>(reference, deep, shallow, maxiter)),
-        2 => dispatch!(extras, iterate_deep_impl::<_, _, 2>(reference, deep, shallow, maxiter)),
-        _ => dispatch!(extras, iterate_deep_impl::<_, _, 3>(reference, deep, shallow, maxiter)),
-    }
+    dispatch!(extras, iterate_deep_impl::<_, _>(reference, deep, shallow, maxiter))
 }
 
 #[inline(always)]
-fn iterate_deep_impl<const DE: bool, const INSIDE: bool, const VARIANT: u8>(
+fn iterate_deep_impl<const DE: bool, const INSIDE: bool>(
     reference: &Reference,
     deep: &Phase<CExp>,
     shallow: &Phase<Complex<f64>>,
@@ -358,14 +338,14 @@ fn iterate_deep_impl<const DE: bool, const INSIDE: bool, const VARIANT: u8>(
     let mut steps = 0;
     if INSIDE && !periodic && maxiter > 2 * INTERIOR_START {
         let mut st = Hybrid::Deep(State::start(deep.dc, deep.spacing, false, maxiter));
-        let exit = run_hybrid::<DE, false, VARIANT>(reference, deep, shallow, &mut st, INTERIOR_START, &mut deep_steps);
+        let exit = run_hybrid::<DE, false>(reference, deep, shallow, &mut st, INTERIOR_START, &mut deep_steps);
         if !matches!(exit, Exit::Stopped) {
             return st.finish(exit, deep_steps);
         }
         steps = st.steps();
     }
     let mut st = Hybrid::Deep(State { steps, ..State::start(deep.dc, deep.spacing, !periodic, maxiter) });
-    let exit = run_hybrid::<DE, INSIDE, VARIANT>(reference, deep, shallow, &mut st, maxiter, &mut deep_steps);
+    let exit = run_hybrid::<DE, INSIDE>(reference, deep, shallow, &mut st, maxiter, &mut deep_steps);
     st.finish(exit, deep_steps)
 }
 
@@ -393,7 +373,7 @@ impl Hybrid {
 
 /// Alternate between extended range and `f64` until escape or `maxiter`.
 #[inline(always)]
-fn run_hybrid<const DE: bool, const INSIDE: bool, const VARIANT: u8>(
+fn run_hybrid<const DE: bool, const INSIDE: bool>(
     reference: &Reference,
     deep: &Phase<CExp>,
     shallow: &Phase<Complex<f64>>,
@@ -405,42 +385,15 @@ fn run_hybrid<const DE: bool, const INSIDE: bool, const VARIANT: u8>(
         match st {
             Hybrid::Deep(s) => {
                 let before = s.steps;
-                let exit = match VARIANT {
-                    0 => run::<_, DE, INSIDE, true, false, 0>(
-                        reference,
-                        |m| reference.z_cexp(m),
-                        |_| 0.0,
-                        deep,
-                        s,
-                        maxiter,
-                    ),
-                    1 => {
-                        let orbit = reference.deep_orbit();
-                        run::<_, DE, INSIDE, true, false, 1>(reference, |m| orbit[m].z, |_| 0.0, deep, s, maxiter)
-                    }
-                    2 => {
-                        let orbit = reference.deep_orbit();
-                        run::<_, DE, INSIDE, true, false, 2>(
-                            reference,
-                            |m| orbit[m].z,
-                            |m| orbit[m].norm,
-                            deep,
-                            s,
-                            maxiter,
-                        )
-                    }
-                    _ => {
-                        let orbit = reference.deep_orbit();
-                        run::<_, DE, INSIDE, true, false, 3>(
-                            reference,
-                            |m| orbit[m].z,
-                            |m| orbit[m].norm,
-                            deep,
-                            s,
-                            maxiter,
-                        )
-                    }
-                };
+                let orbit = reference.deep_orbit();
+                let exit = run::<_, DE, INSIDE, true, false, true>(
+                    reference,
+                    |m| orbit[m].z,
+                    |m| orbit[m].norm,
+                    deep,
+                    s,
+                    maxiter,
+                );
                 *deep_steps += s.steps - before;
                 if !matches!(exit, Exit::Switch) {
                     return exit;
@@ -448,17 +401,21 @@ fn run_hybrid<const DE: bool, const INSIDE: bool, const VARIANT: u8>(
                 *st = Hybrid::Shallow(s.cast());
             }
             Hybrid::Shallow(s) => {
-                let exit =
-                    run::<_, DE, INSIDE, false, true, 0>(reference, |m| reference.z(m), |_| 0.0, shallow, s, maxiter);
+                let exit = run::<_, DE, INSIDE, false, true, false>(
+                    reference,
+                    |m| reference.z(m),
+                    |_| 0.0,
+                    shallow,
+                    s,
+                    maxiter,
+                );
                 if !matches!(exit, Exit::Switch) {
                     return exit;
                 }
                 let mut deep_state: State<CExp> = s.cast();
-                if VARIANT >= 2 {
-                    // Extended range holds any magnitude: fold the rescaling exponent in.
-                    deep_state.dw = deep_state.dw.scale(FloatExp::ONE.ldexp(deep_state.dw_exp));
-                    deep_state.dw_exp = 0;
-                }
+                // Extended range holds any magnitude: fold the rescaling exponent in.
+                deep_state.dw = deep_state.dw.scale(FloatExp::ONE.ldexp(deep_state.dw_exp));
+                deep_state.dw_exp = 0;
                 *st = Hybrid::Deep(deep_state);
             }
         }
