@@ -93,6 +93,11 @@ impl<C: Cplx> BlaTable<C> {
 
     /// The longest valid step at reference index `m` for `|dz|^2 = dz_norm`
     /// that skips at most `max_steps` iterations.
+    ///
+    /// Radii shrink and lengths grow with the level, so validity is
+    /// monotone. Most failing lookups already fail at the shortest step, and
+    /// most successful ones take the longest, so test the shortest first and
+    /// then search down from the top.
     #[inline(always)]
     pub fn lookup(&self, m: usize, dz_norm: C::R, max_steps: u64) -> Option<&Bla<C>> {
         if m == 0 || !(dz_norm < self.max_r2) {
@@ -100,16 +105,22 @@ impl<C: Cplx> BlaTable<C> {
         }
         let i = m - 1;
         let usable = (i.trailing_zeros() as usize).min(self.levels.len());
-        let mut best = None;
-        // Radii shrink as levels grow, so stop at the first failure.
-        for k in 0..usable {
-            let Some(b) = self.levels[k].get(i >> (k + 1)) else { break };
-            if !(dz_norm < b.r2) || b.l as u64 > max_steps {
-                break;
-            }
-            best = Some(b);
+        if usable == 0 {
+            return None;
         }
-        best
+        let shortest = self.levels[0].get(i >> 1)?;
+        if !(dz_norm < shortest.r2) || shortest.l as u64 > max_steps {
+            return None;
+        }
+        for k in (1..usable).rev() {
+            if let Some(b) = self.levels[k].get(i >> (k + 1))
+                && dz_norm < b.r2
+                && b.l as u64 <= max_steps
+            {
+                return Some(b);
+            }
+        }
+        Some(shortest)
     }
 
     /// The same step as [`BlaTable::lookup`], found by searching from the
