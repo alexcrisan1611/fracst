@@ -1,0 +1,131 @@
+name: Release
+
+# Pushing a tag like v0.1.0 builds Linux, Windows and macOS packages and
+# publishes them as a GitHub release. Running the workflow by hand builds
+# the same packages as artifacts without publishing anything.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            # The oldest supported image, for the widest glibc compatibility.
+            os: ubuntu-22.04
+          - name: windows-x86_64
+            os: windows-latest
+          - name: macos-universal
+            os: macos-latest
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
+
+      - name: Determine version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            echo "VERSION=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=dev-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build and package (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cargo build --release --locked -p fracst -p fracst-cli
+          dist="fracst-$VERSION-linux-x86_64"
+          mkdir "$dist"
+          cp target/release/fracst target/release/fracst-cli README.md LICENSE-MIT LICENSE-APACHE "$dist/"
+          cp assets/icon.png "$dist/fracst.png"
+          tar czf "$dist.tar.gz" "$dist"
+
+      - name: Build and package (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo build --release --locked -p fracst -p fracst-cli
+          dist="fracst-$VERSION-windows-x86_64"
+          mkdir "$dist"
+          cp target/release/fracst.exe target/release/fracst-cli.exe README.md LICENSE-MIT LICENSE-APACHE "$dist/"
+          7z a "$dist.zip" "$dist"
+
+      - name: Build and package (macOS, universal)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --locked --target "$target" -p fracst -p fracst-cli
+          done
+          dist="fracst-$VERSION-macos-universal"
+          contents="$dist/fracst.app/Contents"
+          mkdir -p "$contents/MacOS" "$contents/Resources"
+          lipo -create -output "$contents/MacOS/fracst" target/{aarch64,x86_64}-apple-darwin/release/fracst
+          lipo -create -output "$dist/fracst-cli" target/{aarch64,x86_64}-apple-darwin/release/fracst-cli
+          cp assets/icon.icns "$contents/Resources/fracst.icns"
+          sed "s/@VERSION@/${VERSION#v}/g" .github/macos/Info.plist > "$contents/Info.plist"
+          cp README.md LICENSE-MIT LICENSE-APACHE "$dist/"
+          # Ad-hoc signatures: not notarised, but required to run on Apple Silicon.
+          codesign --force --deep --sign - "$dist/fracst.app"
+          codesign --force --sign - "$dist/fracst-cli"
+          ditto -c -k --keepParent "$dist" "$dist.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            fracst-*.tar.gz
+            fracst-*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "fracst ${GITHUB_REF_NAME#v}" \
+            --notes-file .github/release-notes.md \
+            --generate-notes \
+            --verify-tag

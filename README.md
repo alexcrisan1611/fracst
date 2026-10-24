@@ -15,6 +15,17 @@ alternative to [Kalles Fraktaler 2](https://mathr.co.uk/kf/kf.html) (KF2).
 
 ![fracst exploring a spiral at zoom 2.2e238](assets/screenshot.png)
 
+## Download
+
+Prebuilt 64-bit packages for **Windows**, **macOS** (universal: Apple Silicon and Intel)
+and **Linux** are on the [Releases page](https://github.com/alexcrisan1611/fracst/releases/latest).
+Each contains the explorer (`fracst`) and the command-line renderer (`fracst-cli`).
+The builds are not code-signed. On Windows choose **More info → Run anyway** if
+SmartScreen asks. On macOS right-click the app and choose **Open** the first time.
+
+To build from source instead, install [Rust](https://rustup.rs) and run
+`cargo run --release -p fracst`.
+
 ## Why it is faster
 
 KF2 renders with perturbation plus *series approximation*, detects glitched

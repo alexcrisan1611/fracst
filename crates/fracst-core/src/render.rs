@@ -118,7 +118,7 @@ impl Default for Renderer {
 }
 
 /// Make subnormal floats flush to zero on this thread. Values that small are
-/// always negligible here, and subnormal arithmetic is very slow on x86.
+/// always negligible here, and subnormal arithmetic can be very slow.
 fn flush_subnormals() {
     #[cfg(target_arch = "x86_64")]
     // SAFETY: only sets the FTZ and DAZ bits of this thread's MXCSR.
@@ -127,6 +127,14 @@ fn flush_subnormals() {
         std::arch::asm!("stmxcsr [{}]", in(reg) &mut csr, options(nostack));
         csr |= (1 << 15) | (1 << 6);
         std::arch::asm!("ldmxcsr [{}]", in(reg) &csr, options(nostack, readonly));
+    }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: only sets the FZ bit of this thread's FPCR.
+    unsafe {
+        let mut fpcr: u64;
+        std::arch::asm!("mrs {}, fpcr", out(reg) fpcr, options(nomem, nostack));
+        fpcr |= 1 << 24;
+        std::arch::asm!("msr fpcr, {}", in(reg) fpcr, options(nomem, nostack));
     }
 }
 

@@ -2,8 +2,9 @@
 //! `cargo run --release -p fracst-core --example icon [-- <output dir>]`
 //!
 //! Writes `icon.png` (512 px), `icon.ico` (16–256 px, for the Windows
-//! executable) and `icon.svg` (the PNG wrapped for tools that want SVG) to
-//! the output directory, `assets/` by default.
+//! executable), `icon.icns` (16–512 px, for the macOS app bundle) and
+//! `icon.svg` (the PNG wrapped for tools that want SVG) to the output
+//! directory, `assets/` by default.
 
 use fracst_core::{Fixed, FloatExp, INTERIOR, Progress, Renderer, Settings, View, image};
 use std::path::PathBuf;
@@ -21,13 +22,30 @@ fn main() {
     std::fs::write(dir.join("icon.png"), png_at(512)).unwrap();
     let ico_pngs: Vec<(u32, Vec<u8>)> = ICO_SIZES.iter().filter(|&&s| s <= 256).map(|&s| (s, png_at(s))).collect();
     std::fs::write(dir.join("icon.ico"), ico(&ico_pngs)).unwrap();
+    // PNG-based icns entries: (type, pixel size); `ic11`..`ic14` are the @2x variants.
+    let icns_entries: Vec<([u8; 4], Vec<u8>)> = [
+        (*b"icp4", 16),
+        (*b"icp5", 32),
+        (*b"ic11", 32),
+        (*b"icp6", 64),
+        (*b"ic12", 64),
+        (*b"ic07", 128),
+        (*b"ic08", 256),
+        (*b"ic13", 256),
+        (*b"ic09", 512),
+        (*b"ic14", 512),
+    ]
+    .into_iter()
+    .map(|(kind, size)| (kind, png_at(size)))
+    .collect();
+    std::fs::write(dir.join("icon.icns"), icns(&icns_entries)).unwrap();
     let svg = format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\">\
          <image width=\"64\" height=\"64\" href=\"data:image/png;base64,{}\"/></svg>\n",
         base64(&png_at(128))
     );
     std::fs::write(dir.join("icon.svg"), svg).unwrap();
-    println!("wrote icon.png, icon.ico and icon.svg to {}", dir.display());
+    println!("wrote icon.png, icon.ico, icon.icns and icon.svg to {}", dir.display());
 }
 
 fn render() -> Vec<u8> {
@@ -122,6 +140,20 @@ fn ico(images: &[(u32, Vec<u8>)]) -> Vec<u8> {
         offset += png.len() as u32;
     }
     for (_, png) in images {
+        out.extend_from_slice(png);
+    }
+    out
+}
+
+/// An Apple icon file holding PNG-compressed images.
+fn icns(entries: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
+    let total = 8 + entries.iter().map(|(_, png)| 8 + png.len()).sum::<usize>();
+    let mut out = Vec::with_capacity(total);
+    out.extend_from_slice(b"icns");
+    out.extend_from_slice(&(total as u32).to_be_bytes());
+    for (kind, png) in entries {
+        out.extend_from_slice(kind);
+        out.extend_from_slice(&(8 + png.len() as u32).to_be_bytes());
         out.extend_from_slice(png);
     }
     out
