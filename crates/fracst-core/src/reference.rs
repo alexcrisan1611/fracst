@@ -4,6 +4,7 @@ use crate::Progress;
 use crate::fixed::{self, Fixed};
 use crate::floatexp::FloatExp;
 use crate::num::{CExp, Complex, Cplx};
+use std::sync::OnceLock;
 use std::sync::atomic::Ordering;
 
 /// Below this magnitude an orbit value is flushed to zero in the `f64` array
@@ -17,6 +18,14 @@ pub const STOP_MARGIN_BITS: i32 = -8;
 /// Escape radius for the reference orbit. Pixels keep iterating past the
 /// reference's escape thanks to rebasing, so this only needs to be >= 2.
 const REF_BAILOUT2: f64 = 4.0;
+
+/// An orbit value prepared for the extended-range phase: the value itself
+/// and its squared magnitude in `f64` (zero for values below [`TINY`]).
+#[derive(Clone, Copy, Debug)]
+pub struct DeepZ {
+    pub z: CExp,
+    pub norm: f64,
+}
 
 /// The orbit `Z_{n+1} = Z_n^2 + C` of a reference point `C`.
 pub struct Reference {
@@ -41,6 +50,8 @@ pub struct Reference {
     pub nearby_period: Option<u64>,
     /// State for continuing the orbit; `None` once it escaped or stopped.
     state: Option<Continuation>,
+    /// The orbit as [`DeepZ`] values, built on first use by deep zooms.
+    deep: OnceLock<Vec<DeepZ>>,
 }
 
 struct Continuation {
@@ -85,6 +96,7 @@ impl Reference {
             truncated: None,
             maxiter: 0,
             nearby_period: None,
+            deep: OnceLock::new(),
             state: Some(Continuation {
                 z: FixedOrbit::new(re, im),
                 der: Complex::ZERO,
@@ -108,6 +120,7 @@ impl Reference {
             return true;
         }
         let Some(mut st) = self.state.take() else { return true };
+        self.deep = OnceLock::new();
         progress.set_total(maxiter);
         // Index of the orbit value about to be stored.
         let mut i = self.orbit.len() as u64;
@@ -193,6 +206,13 @@ impl Reference {
     pub fn z_cexp(&self, m: usize) -> CExp {
         let z = self.orbit[m];
         if z.re == 0.0 && z.im == 0.0 { CExp::from_cfe(self.z_fe(m)) } else { CExp::new(z.re, z.im, 0) }
+    }
+
+    /// The orbit prepared for the extended-range phase (built once, on first use).
+    pub fn deep_orbit(&self) -> &[DeepZ] {
+        self.deep.get_or_init(|| {
+            (0..self.orbit.len()).map(|m| DeepZ { z: self.z_cexp(m), norm: self.orbit[m].norm() }).collect()
+        })
     }
 
     pub fn memory_bytes(&self) -> usize {
