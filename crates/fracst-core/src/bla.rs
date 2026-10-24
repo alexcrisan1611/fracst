@@ -112,6 +112,28 @@ impl<C: Cplx> BlaTable<C> {
         best
     }
 
+    /// The same step as [`BlaTable::lookup`], found by searching from the
+    /// longest candidate down. Validity only shrinks with the level, so the
+    /// result is identical; this is faster when long skips usually apply, as
+    /// in the extended-range phase where `dz` is tiny.
+    #[inline(always)]
+    pub fn lookup_longest(&self, m: usize, dz_norm: C::R, max_steps: u64) -> Option<&Bla<C>> {
+        if m == 0 || !(dz_norm < self.max_r2) {
+            return None;
+        }
+        let i = m - 1;
+        let usable = (i.trailing_zeros() as usize).min(self.levels.len());
+        for k in (0..usable).rev() {
+            if let Some(b) = self.levels[k].get(i >> (k + 1))
+                && dz_norm < b.r2
+                && b.l as u64 <= max_steps
+            {
+                return Some(b);
+            }
+        }
+        None
+    }
+
     /// Convert to another complex type, invalidating entries that do not fit.
     pub fn cast<D: Cplx>(&self) -> BlaTable<D> {
         let levels = self
