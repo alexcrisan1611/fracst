@@ -11,3 +11,6 @@ repository.workspace = true
 fracst-core.workspace = true
 eframe.workspace = true
 rfd.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"

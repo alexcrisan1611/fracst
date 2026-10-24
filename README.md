@@ -1,4 +1,4 @@
-<img src="assets/icon.svg" width="64" height="64" alt="">
+<img src="assets/icon.png" width="96" height="96" alt="fracst icon">
 
 # fracst
 
@@ -149,6 +149,9 @@ Not supported yet:
 - Rotation and stretch.
 - Distance-estimation colour methods.
 - Multi-colour and texture options.
+
+The icon is rendered by fracst itself:
+`cargo run --release -p fracst-core --example icon` regenerates `assets/icon.*`.
 
 ## Project layout
 

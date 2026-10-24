@@ -6,10 +6,11 @@ mod app;
 mod worker;
 
 fn main() -> eframe::Result {
-    let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default().with_title("fracst").with_inner_size([1400.0, 860.0]),
-        ..Default::default()
-    };
+    let mut viewport = eframe::egui::ViewportBuilder::default().with_title("fracst").with_inner_size([1400.0, 860.0]);
+    if let Ok((rgba, width, height)) = fracst_core::image::decode_rgba_png(include_bytes!("../../../assets/icon.png")) {
+        viewport = viewport.with_icon(eframe::egui::IconData { rgba, width, height });
+    }
+    let options = eframe::NativeOptions { viewport, ..Default::default() };
     let file = std::env::args_os().nth(1).map(std::path::PathBuf::from);
     eframe::run_native(
         "fracst",
