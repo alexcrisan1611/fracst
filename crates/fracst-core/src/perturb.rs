@@ -158,7 +158,15 @@ enum Exit {
 /// BLA lookups search from the longest step down, as long skips are the
 /// norm while `dz` is tiny. The results are the same either way.
 #[inline(always)]
-fn run<C: Cplx, const DE: bool, const INSIDE: bool, const UP: bool, const DOWN: bool, const DEEP: bool>(
+fn run<
+    C: Cplx,
+    const DE: bool,
+    const INSIDE: bool,
+    const UP: bool,
+    const DOWN: bool,
+    const DEEP: bool,
+    const FMA: bool,
+>(
     reference: &Reference,
     z_at: impl Fn(usize) -> C,
     zn_at: impl Fn(usize) -> f64,
@@ -176,8 +184,11 @@ fn run<C: Cplx, const DE: bool, const INSIDE: bool, const UP: bool, const DOWN: 
     let mut zm = z_at(m);
     // Below a quarter of the bailout, |Z_m + dz| stays inside the escape radius.
     let zn_escape = if fast_path { p.bailout2.to_fe().to_f64() * 0.25 } else { 0.0 };
+    // With `FMA`, multiply-adds are fused: shorter dependency chains per step.
+    let mul_add = |a: C, b: C, c: C| if FMA { a.fused_mul_add(b, c) } else { a * b + c };
+    let norm = |a: C| if FMA { a.fused_norm() } else { a.norm() };
     let exit = loop {
-        let mut dzn = dz.norm();
+        let mut dzn = norm(dz);
         let fast = fast_path && m != mref && !(dzn > p.switch2) && {
             let zmn = zn_at(m);
             zmn >= ORDINARY_NORM && zmn <= zn_escape
@@ -185,7 +196,7 @@ fn run<C: Cplx, const DE: bool, const INSIDE: bool, const UP: bool, const DOWN: 
         let mut z = zm;
         if !fast {
             z = zm + dz;
-            let zn = z.norm();
+            let zn = norm(z);
             if zn > p.bailout2 {
                 break Exit::Escaped(z.to_c64());
             }
@@ -239,9 +250,9 @@ fn run<C: Cplx, const DE: bool, const INSIDE: bool, const UP: bool, const DOWN: 
         steps += 1;
         let bla = if DEEP { p.bla.lookup_longest(m, dzn, maxiter - n) } else { p.bla.lookup(m, dzn, maxiter - n) };
         if let Some(b) = bla {
-            dz = b.a * dz + b.b * p.dc;
+            dz = mul_add(b.a, dz, b.b * p.dc);
             if DE {
-                der = b.a * der + b.b.scale(p.spacing);
+                der = mul_add(b.a, der, b.b.scale(p.spacing));
             }
             if INSIDE && dw_active {
                 dw = b.a * dw;
@@ -252,13 +263,13 @@ fn run<C: Cplx, const DE: bool, const INSIDE: bool, const UP: bool, const DOWN: 
             if DE || (INSIDE && dw_active) {
                 let z2 = if fast { zm + dz } else { z }.mul2();
                 if DE {
-                    der = z2 * der + C::from_real(p.spacing);
+                    der = mul_add(z2, der, C::from_real(p.spacing));
                 }
                 if INSIDE && dw_active {
                     dw = z2 * dw;
                 }
             }
-            dz = (zm.mul2() + dz) * dz + p.dc;
+            dz = mul_add(zm.mul2() + dz, dz, p.dc);
             m += 1;
             n += 1;
         }
@@ -288,12 +299,37 @@ macro_rules! dispatch {
 }
 
 /// Iterate one pixel entirely in `f64` (zooms shallower than ~1e-270).
+///
+/// On CPUs with fused multiply-add this runs a copy of the loop compiled
+/// with FMA enabled, which shortens each step's dependency chain.
 pub fn iterate_f64(reference: &Reference, p: &Phase<Complex<f64>>, maxiter: u64, extras: Extras) -> PixelResult {
-    dispatch!(extras, iterate_f64_impl::<_, _>(reference, p, maxiter))
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::arch::is_x86_feature_detected!("fma") {
+            // SAFETY: the CPU supports FMA, checked just above.
+            return unsafe { iterate_f64_fma(reference, p, maxiter, extras) };
+        }
+        dispatch!(extras, iterate_f64_impl::<_, _, false>(reference, p, maxiter))
+    }
+    // FMA is part of the base AArch64 instruction set.
+    #[cfg(target_arch = "aarch64")]
+    {
+        dispatch!(extras, iterate_f64_impl::<_, _, true>(reference, p, maxiter))
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        dispatch!(extras, iterate_f64_impl::<_, _, false>(reference, p, maxiter))
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "fma")]
+fn iterate_f64_fma(reference: &Reference, p: &Phase<Complex<f64>>, maxiter: u64, extras: Extras) -> PixelResult {
+    dispatch!(extras, iterate_f64_impl::<_, _, true>(reference, p, maxiter))
 }
 
 #[inline(always)]
-fn iterate_f64_impl<const DE: bool, const INSIDE: bool>(
+fn iterate_f64_impl<const DE: bool, const INSIDE: bool, const FMA: bool>(
     reference: &Reference,
     p: &Phase<Complex<f64>>,
     maxiter: u64,
@@ -303,7 +339,7 @@ fn iterate_f64_impl<const DE: bool, const INSIDE: bool>(
     let mut steps = 0;
     if INSIDE && !periodic && maxiter > 2 * INTERIOR_START {
         let mut st = State::start(p.dc, p.spacing, false, maxiter);
-        let exit = run::<_, DE, false, false, false, false>(reference, z_at, |_| 0.0, p, &mut st, INTERIOR_START);
+        let exit = run::<_, DE, false, false, false, false, FMA>(reference, z_at, |_| 0.0, p, &mut st, INTERIOR_START);
         if !matches!(exit, Exit::Stopped) {
             return finish(&st, exit, 0);
         }
@@ -311,7 +347,7 @@ fn iterate_f64_impl<const DE: bool, const INSIDE: bool>(
     }
     let mut st = State::start(p.dc, p.spacing, !periodic, maxiter);
     st.steps = steps;
-    let exit = run::<_, DE, INSIDE, false, false, false>(reference, z_at, |_| 0.0, p, &mut st, maxiter);
+    let exit = run::<_, DE, INSIDE, false, false, false, FMA>(reference, z_at, |_| 0.0, p, &mut st, maxiter);
     finish(&st, exit, 0)
 }
 
@@ -386,7 +422,7 @@ fn run_hybrid<const DE: bool, const INSIDE: bool>(
             Hybrid::Deep(s) => {
                 let before = s.steps;
                 let orbit = reference.deep_orbit();
-                let exit = run::<_, DE, INSIDE, true, false, true>(
+                let exit = run::<_, DE, INSIDE, true, false, true, false>(
                     reference,
                     |m| orbit[m].z,
                     |m| orbit[m].norm,
@@ -401,7 +437,7 @@ fn run_hybrid<const DE: bool, const INSIDE: bool>(
                 *st = Hybrid::Shallow(s.cast());
             }
             Hybrid::Shallow(s) => {
-                let exit = run::<_, DE, INSIDE, false, true, false>(
+                let exit = run::<_, DE, INSIDE, false, true, false, false>(
                     reference,
                     |m| reference.z(m),
                     |_| 0.0,

@@ -27,6 +27,13 @@ pub trait Real:
     fn abs(self) -> Self;
     fn sqrt(self) -> Self;
     fn is_finite(self) -> bool;
+    /// `self * b + c`, fused for `f64`. Only call it from code compiled with
+    /// FMA enabled (see `perturb::iterate_f64`): without hardware FMA the
+    /// fused version is a slow software routine.
+    #[inline(always)]
+    fn fused_mul_add(self, b: Self, c: Self) -> Self {
+        self * b + c
+    }
     #[inline]
     fn max(self, o: Self) -> Self {
         if o > self { o } else { self }
@@ -71,6 +78,10 @@ impl Real for f64 {
     #[inline(always)]
     fn is_finite(self) -> bool {
         f64::is_finite(self)
+    }
+    #[inline(always)]
+    fn fused_mul_add(self, b: Self, c: Self) -> Self {
+        f64::mul_add(self, b, c)
     }
 }
 
@@ -218,6 +229,16 @@ pub trait Cplx:
     const ZERO: Self;
     const ONE: Self;
     fn norm(self) -> Self::R;
+    /// `self * b + c` using [`Real::fused_mul_add`] (same caveat).
+    #[inline(always)]
+    fn fused_mul_add(self, b: Self, c: Self) -> Self {
+        self * b + c
+    }
+    /// [`Cplx::norm`] using [`Real::fused_mul_add`] (same caveat).
+    #[inline(always)]
+    fn fused_norm(self) -> Self::R {
+        self.norm()
+    }
     fn mul2(self) -> Self;
     fn scale(self, k: Self::R) -> Self;
     fn from_real(x: Self::R) -> Self;
@@ -234,6 +255,17 @@ impl<T: Real> Cplx for Complex<T> {
     #[inline(always)]
     fn norm(self) -> T {
         Complex::norm(self)
+    }
+    #[inline(always)]
+    fn fused_mul_add(self, b: Self, c: Self) -> Self {
+        Complex {
+            re: self.re.fused_mul_add(b.re, (-self.im).fused_mul_add(b.im, c.re)),
+            im: self.re.fused_mul_add(b.im, self.im.fused_mul_add(b.re, c.im)),
+        }
+    }
+    #[inline(always)]
+    fn fused_norm(self) -> T {
+        self.re.fused_mul_add(self.re, self.im * self.im)
     }
     #[inline(always)]
     fn mul2(self) -> Self {
