@@ -3,7 +3,7 @@
 use crate::fixed::{Fixed, limbs_for_bits};
 use crate::floatexp::FloatExp;
 
-/// Where to look and how deep. Follows the KF2 convention: at zoom `z` the
+/// Where to look and how deep. As in `.kfr` files, at zoom `z` the
 /// image height spans `4 / z`, i.e. half the height is `2 / z`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct View {
@@ -11,7 +11,7 @@ pub struct View {
     pub im: Fixed,
     pub zoom: FloatExp,
     pub maxiter: u64,
-    /// KF2 compatibility: imaginary axis increases downwards (KF2's default).
+    /// Imaginary axis increases downwards (the default in `.kfr` files).
     pub imag_down: bool,
 }
 

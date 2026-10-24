@@ -277,11 +277,11 @@ impl App {
             if ui.button("Reset").clicked() {
                 self.view = View::default();
             }
-            if ui.button("Copy KFR").on_hover_text("Copy the location as KF2 text").clicked() {
+            if ui.button("Copy").on_hover_text("Copy the location as .kfr text").clicked() {
                 ui.ctx().copy_text(kfr::to_string(&self.view, &self.colouring));
                 self.status = "Location copied to the clipboard.".into();
             }
-            if ui.button("Paste KFR…").clicked() {
+            if ui.button("Paste…").on_hover_text("Paste a location in .kfr text format").clicked() {
                 self.location_text.clear();
                 self.show_location = true;
             }
@@ -358,7 +358,7 @@ impl App {
             c.palette = Palette::new(keys);
         }
         ui.add(Slider::new(&mut c.iter_div, 0.0001..=10000.0).logarithmic(true).text("iter div"))
-            .on_hover_text("Iterations per palette step (KF2 IterDiv). Smaller = more colour bands");
+            .on_hover_text("Iterations per palette step (IterDiv). Smaller = more colour bands");
         ui.add(Slider::new(&mut c.offset, 0.0..=1024.0).text("offset"));
         ComboBox::from_label("transfer").selected_text(c.transfer.name()).show_ui(ui, |ui| {
             for t in Transfer::ALL {
@@ -372,7 +372,7 @@ impl App {
             ui.color_edit_button_srgb(&mut c.interior);
         });
         let mut slopes_on = c.slopes.is_some();
-        ui.checkbox(&mut slopes_on, "Slopes (KF2 shading)");
+        ui.checkbox(&mut slopes_on, "Slope shading");
         match (slopes_on, &mut c.slopes) {
             (true, Some(s)) => {
                 ui.add(Slider::new(&mut s.power, 1.0..=1000.0).logarithmic(true).text("power"));
@@ -412,7 +412,8 @@ impl App {
             "Use the nucleus of a minibrot near the view as the reference: its orbit stops after one period",
         );
         ui.checkbox(&mut self.settings.reuse_reference, "Reuse reference orbit while nearby");
-        ui.checkbox(&mut self.view.imag_down, "Imaginary axis points down (KF2)");
+        ui.checkbox(&mut self.view.imag_down, "Imaginary axis points down")
+            .on_hover_text("The default for .kfr files without ImagPointsUp");
     }
 
     fn export_ui(&mut self, ui: &mut egui::Ui) {
@@ -568,8 +569,8 @@ impl App {
 
     fn location_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_location;
-        egui::Window::new("Location (KFR text)").open(&mut open).default_width(480.0).show(ctx, |ui| {
-            ui.label("Paste KF2 location text (Re:, Im:, Zoom:, Iterations:, Colors: …)");
+        egui::Window::new("Location text").open(&mut open).default_width(480.0).show(ctx, |ui| {
+            ui.label("Paste location text in .kfr format (Re:, Im:, Zoom:, Iterations:, Colors: …)");
             ui.add(
                 TextEdit::multiline(&mut self.location_text)
                     .code_editor()
@@ -626,7 +627,7 @@ impl App {
 
     fn save_dialog(&mut self) {
         if let Some(path) =
-            rfd::FileDialog::new().add_filter("KF2 location", &["kfr"]).set_file_name("location.kfr").save_file()
+            rfd::FileDialog::new().add_filter("Location", &["kfr"]).set_file_name("location.kfr").save_file()
         {
             self.status = match kfr::save(&path, &self.view, &self.colouring) {
                 Ok(()) => format!("Saved {}.", path.display()),

@@ -4,8 +4,7 @@
 //! ## Automatic iterations
 //!
 //! A fixed iteration limit is either too low near minibrots (their
-//! surroundings render as solid interior — KF2's auto mode often loses
-//! detail this way) or wastefully high elsewhere. With
+//! surroundings render as solid interior) or wastefully high elsewhere. With
 //! [`Settings::auto_iterations`] the limit is chosen per frame:
 //!
 //! 1. **Prediction.** While computing the reference orbit, a ball test finds

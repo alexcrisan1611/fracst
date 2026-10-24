@@ -1,7 +1,7 @@
-//! Colouring of raw iteration data, following Kalles Fraktaler 2's model:
-//! a 1024-entry palette interpolated from key colours, indexed by the
-//! (transferred) smooth iteration count divided by `iter_div`, plus KF2's
-//! neighbour-difference "slopes" shading.
+//! Colouring of raw iteration data: a 1024-entry palette interpolated from
+//! key colours, indexed by the (transferred) smooth iteration count divided
+//! by `iter_div`, plus neighbour-difference "slopes" shading. The parameters
+//! match the colour keys of `.kfr` location files.
 
 use crate::render::Frame;
 use rayon::prelude::*;
@@ -19,7 +19,7 @@ impl Palette {
     pub fn new(keys: Vec<[u8; 3]>) -> Self {
         let keys = if keys.is_empty() { vec![[0, 0, 0], [255, 255, 255]] } else { keys };
         let n = keys.len();
-        // KF2 blends neighbouring keys with a sinusoidal ease.
+        // Neighbouring keys are blended with a sinusoidal ease.
         let table = (0..PALETTE_SIZE)
             .map(|i| {
                 let t = i as f64 * n as f64 / PALETTE_SIZE as f64;
@@ -32,8 +32,8 @@ impl Palette {
         Palette { keys, table }
     }
 
-    /// The palette of a fresh KF2 session.
-    pub fn kf2_default() -> Self {
+    /// The default palette.
+    pub fn classic() -> Self {
         Self::new(vec![
             [255, 255, 255],
             [64, 0, 128],
@@ -49,7 +49,7 @@ impl Palette {
     /// Built-in palettes for quick selection.
     pub fn presets() -> Vec<(&'static str, Palette)> {
         vec![
-            ("KF2 default", Self::kf2_default()),
+            ("Classic", Self::classic()),
             (
                 "Ember",
                 Self::new(vec![[0, 0, 0], [96, 16, 0], [224, 96, 0], [255, 224, 128], [255, 255, 255], [128, 64, 16]]),
@@ -99,7 +99,7 @@ impl Palette {
     }
 }
 
-/// KF2 "ColorMethod" transfer functions applied to the iteration count.
+/// Transfer functions applied to the iteration count (`ColorMethod` in `.kfr` files).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Transfer {
     #[default]
@@ -126,8 +126,8 @@ impl Transfer {
         }
     }
 
-    /// KF2's ColorMethod number.
-    pub fn kf2_method(self) -> u32 {
+    /// The `ColorMethod` number used in `.kfr` files.
+    pub fn method_code(self) -> u32 {
         match self {
             Transfer::Linear => 0,
             Transfer::Sqrt => 1,
@@ -138,7 +138,7 @@ impl Transfer {
         }
     }
 
-    pub fn from_kf2_method(m: u32) -> Self {
+    pub fn from_method_code(m: u32) -> Self {
         match m {
             1 => Transfer::Sqrt,
             2 => Transfer::Cbrt,
@@ -179,15 +179,15 @@ impl Default for Slopes {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Colouring {
     pub palette: Palette,
-    /// Iterations per palette entry (KF2 "IterDiv"); the palette repeats
+    /// Iterations per palette entry (`IterDiv`); the palette repeats
     /// every `1024 * iter_div` (transferred) iterations.
     pub iter_div: f64,
-    /// Palette offset in entries, 0..1024 (KF2 "ColorOffset").
+    /// Palette offset in entries, 0..1024 (`ColorOffset`).
     pub offset: f64,
     pub transfer: Transfer,
-    /// Interpolate between palette entries (KF2 "Smooth").
+    /// Interpolate between palette entries (`Smooth`).
     pub smooth: bool,
-    /// Drop the fractional iteration count (KF2 "Flat").
+    /// Drop the fractional iteration count (`Flat`).
     pub flat: bool,
     pub interior: [u8; 3],
     pub slopes: Option<Slopes>,
@@ -196,7 +196,7 @@ pub struct Colouring {
 impl Default for Colouring {
     fn default() -> Self {
         Colouring {
-            palette: Palette::kf2_default(),
+            palette: Palette::classic(),
             iter_div: 0.1,
             offset: 0.0,
             transfer: Transfer::Linear,
@@ -209,7 +209,7 @@ impl Default for Colouring {
 }
 
 impl Colouring {
-    /// Colour a frame into 8-bit RGBA with KF2's ordered dither.
+    /// Colour a frame into 8-bit RGBA with an ordered dither.
     pub fn apply(&self, frame: &Frame) -> Vec<u8> {
         let (w, h) = (frame.width as usize, frame.height as usize);
         let mut out = vec![0u8; w * h * 4];

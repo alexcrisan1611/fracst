@@ -7,7 +7,7 @@ use std::time::Instant;
 #[derive(Parser)]
 #[command(version, about)]
 struct Args {
-    /// Location file: .kfr, or a PNG saved by fracst/KF2.
+    /// Location file: .kfr, or a PNG with an embedded location.
     location: Option<PathBuf>,
     /// Real part of the centre (decimal, any number of digits).
     #[arg(long, allow_hyphen_values = true)]
@@ -15,7 +15,7 @@ struct Args {
     /// Imaginary part of the centre.
     #[arg(long, allow_hyphen_values = true)]
     im: Option<String>,
-    /// Zoom (KF2 convention: image height = 4 / zoom), e.g. 1e100.
+    /// Zoom (the image height spans 4 / zoom), e.g. 1e100.
     #[arg(long)]
     zoom: Option<String>,
     /// Maximum iterations.
@@ -51,7 +51,7 @@ struct Args {
     /// BLA tolerance as a power of two (epsilon = 2^-bits).
     #[arg(long, default_value_t = 40)]
     bla_bits: u32,
-    /// Palette repeat control (KF2 IterDiv); overrides the file.
+    /// Iterations per palette step (IterDiv); overrides the file.
     #[arg(long)]
     iter_div: Option<f64>,
     /// Disable slope shading.
@@ -66,7 +66,7 @@ struct Args {
     /// With --find-minibrot: zoom relative to the minibrot (1 = it fills the image height).
     #[arg(long, default_value_t = 1.0)]
     mini_zoom: f64,
-    /// Render a zoom-out sequence of N frames (KF2 style, for zoom videos):
+    /// Render a zoom-out sequence of N frames (for zoom videos):
     /// frames are written as <output stem>-00000.png, -00001.png, ...
     #[arg(long, value_name = "N")]
     zoom_out: Option<u32>,

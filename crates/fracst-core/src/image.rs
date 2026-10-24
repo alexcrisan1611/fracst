@@ -1,5 +1,5 @@
-//! PNG output with the location embedded the way KF2 does it (a `Comment`
-//! text chunk holding KFR text), so KF2 and fracst can reopen saved images.
+//! PNG output with the location embedded as `.kfr` text in a `Comment`
+//! chunk, so saved images can be reopened as locations.
 
 use std::fs::File;
 use std::io::BufWriter;

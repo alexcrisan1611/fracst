@@ -1,7 +1,7 @@
-//! Kalles Fraktaler 2 location files (`.kfr`) and image metadata.
+//! `.kfr` location files and image metadata.
 //!
 //! KFR is `Key: value` per line. We read the location, iteration and colour
-//! keys we support, ignore the rest, and write files KF2 can open.
+//! keys we support, ignore the rest, and write the same keys back.
 
 use crate::colour::{Colouring, Palette, Slopes, Transfer};
 use crate::fixed::Fixed;
@@ -40,7 +40,7 @@ pub fn parse(text: &str) -> Result<Location, String> {
 
     let mut c = Colouring::default();
     if let Some(colors) = get("Colors") {
-        // KF2 stores B,G,R triplets.
+        // Colours are stored as B,G,R triplets.
         let v: Vec<u8> = colors.split(',').filter_map(|s| s.trim().parse().ok()).collect();
         let keys: Vec<[u8; 3]> = v.as_chunks::<3>().0.iter().map(|t| [t[2], t[1], t[0]]).collect();
         if !keys.is_empty() {
@@ -57,7 +57,7 @@ pub fn parse(text: &str) -> Result<Location, String> {
         c.iter_div = d;
     }
     c.offset = num("ColorOffset").unwrap_or(0.0);
-    c.transfer = Transfer::from_kf2_method(num("ColorMethod").unwrap_or(0.0) as u32);
+    c.transfer = Transfer::from_method_code(num("ColorMethod").unwrap_or(0.0) as u32);
     c.smooth = num("Smooth").is_none_or(|v| v != 0.0);
     c.flat = num("Flat").is_some_and(|v| v != 0.0);
     c.slopes = num("Slopes").filter(|v| *v != 0.0).map(|_| Slopes {
@@ -83,7 +83,7 @@ pub fn to_string(view: &View, c: &Colouring) -> String {
     line("Zoom", &format_args!("{:.16}", view.zoom));
     line("Iterations", &view.maxiter);
     line("IterDiv", &format_args!("{:.6}", c.iter_div));
-    line("ColorMethod", &c.transfer.kf2_method());
+    line("ColorMethod", &c.transfer.method_code());
     line("Differences", &0);
     line("ColorOffset", &(c.offset.rem_euclid(1024.0) as u32));
     line("Colors", &c.palette.keys().iter().map(bgr).collect::<String>());

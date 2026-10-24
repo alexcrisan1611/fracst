@@ -2,16 +2,17 @@
 
 # fracst
 
-A fast deep-zoom Mandelbrot set explorer written in modern Rust: a faster
-alternative to [Kalles Fraktaler 2](https://mathr.co.uk/kf/kf.html) (KF2).
+A fast deep-zoom Mandelbrot set explorer written in modern Rust: an
+alternative to [Fraktaler 3](https://fraktaler.mathr.co.uk/) focused on the
+Mandelbrot set, with automatic iteration limits and minibrot-aware references.
 
 - Zoom to 10^1000 and beyond, interactively.
-- Opens and saves KF2 `.kfr` locations, and embeds the location in saved PNGs
-  the same way KF2 does. KF2 and fracst can open each other's images.
-- KF2-style colouring: 1024-entry palettes interpolated from key colours,
+- Opens and saves `.kfr` location files (Fraktaler 3 can import them), and
+  embeds the location in saved PNGs so images can be reopened.
+- Palette colouring: 1024-entry palettes interpolated from key colours,
   `IterDiv`, `ColorOffset`, transfer functions, and neighbour-difference slope shading.
 - Newton's method minibrot finder ("jump to the nearest minibrot").
-- CLI for batch renders, supersampling and KF2-style zoom-out sequences for videos.
+- CLI for batch renders, supersampling and zoom-out sequences for videos.
 
 ![fracst exploring a spiral at zoom 2.2e238](assets/screenshot.png)
 
@@ -26,33 +27,34 @@ SmartScreen asks. On macOS right-click the app and choose **Open** the first tim
 To build from source instead, install [Rust](https://rustup.rs) and run
 `cargo run --release -p fracst`.
 
-## Why it is faster
+## How it compares with Fraktaler 3
 
-KF2 renders with perturbation plus *series approximation*, detects glitched
-pixels and fixes them with extra reference orbits, and falls back to slow
-number types past 1e300 zoom. fracst uses newer techniques:
+Both render with perturbation, *bilinear approximation* (BLA), which skips
+iterations anywhere along the orbit in steps of up to 2^k, and *rebasing*,
+which needs only one reference orbit and avoids glitches by construction.
+Where they differ:
 
-| | KF2 | fracst |
+| | Fraktaler 3 | fracst |
 |---|---|---|
-| Skipping iterations | Series approximation (start of the orbit only) | **Bilinear approximation** (BLA): skips anywhere along the orbit, in steps of up to 2^k iterations |
-| Glitches | Detect, add references, re-render | **Rebasing**: one reference orbit, no glitches by construction |
-| Reference length | Always up to the iteration limit | **Snaps to a nearby minibrot's nucleus** and stops after one period |
-| Iteration limit | Manual, or an auto mode that loses detail near minibrots | **Predicted from nearby minibrots**, corrected per frame (see below) |
-| Interior pixels | Iterated to the limit | **Interior detection** stops once a pixel is attracted to a cycle |
-| Past 1e300 | `long double` / `floatexp` for the whole pixel | Extended range (shared-exponent complex) **only while the offset is tiny**, then plain `f64` |
-| Reference orbit | MPFR | Custom fixed-point bignum (squarings only, truncated products) |
+| Reference orbit | Image centre. A known period can be locked by hand | **Snaps to a nearby minibrot's nucleus** (Newton's method) and stops after one period |
+| Iteration limit | Set by hand | **Automatic**: predicted from nearby minibrots, corrected per frame (see below) |
+| Interior detection | Derivative with respect to z₁ | **Cycle multiplier at period ends** with a periodic reference, z₁ derivative otherwise |
+| Past 1e300 | One extended number type for the whole frame | Extended range (shared-exponent complex) **only while a pixel's offset is tiny**, then plain `f64` |
+| BLA tolerance | 2^-24 | 2^-40 by default (see Accuracy) |
+| Reference arithmetic | MPFR | Custom fixed-point bignum (squarings only, truncated products) |
+| Formulas | Mandelbrot, Burning Ship, hybrids and more | Mandelbrot z² + c only |
+| GPU | OpenCL | CPU only, for now |
 
 BLA and rebasing were introduced by Zhuoran on fractalforums. The theory is
 written up by Claude Heiland-Allen in [deep zoom theory and practice](https://mathr.co.uk/web/deep-zoom.html)
 and used in his [Fraktaler 3](https://fraktaler.mathr.co.uk/). fracst
 implements these published algorithms independently and contains no code from
-KF2 or Fraktaler 3.
+Fraktaler 3.
 
 ## Automatic iterations
 
 A fixed iteration limit is either too low near minibrots, so their surroundings
-render as solid interior (KF2's auto mode often loses detail this way), or
-wastefully high elsewhere. With **Auto iterations** (on by default in the
+render as solid interior, or wastefully high elsewhere. With **Auto iterations** (on by default in the
 explorer, `--auto-iterations` in the CLI) fracst picks the limit for each frame:
 
 1. **Predict.** While computing the reference orbit, a ball test finds the
@@ -92,15 +94,14 @@ laptop (boost clocks and thermals).
 | Inside a minibrot (21% interior, 1M max iterations) | 2e400 | 136,874 | 6.0 s | not run | — |
 
 "Plain perturbation" is the same engine with BLA and interior detection
-turned off: one reference with rebasing, so it needs no glitch passes.
-It is a stand-in, not KF2 itself. KF2's series approximation skips the start
-of exterior orbits, so expect smaller gains than these on simple exterior
-views. KF2 iterates interior pixels to the limit and re-renders glitches, so
-expect larger gains around minibrots. At shallow zooms such as the seahorse
-row, BLA cannot skip anything and fracst runs at plain perturbation speed.
+turned off (one reference with rebasing). It shows what the iteration
+skipping buys, and is not a comparison with another program. At shallow
+zooms such as the seahorse row, BLA cannot skip anything and fracst runs at
+plain perturbation speed.
 
 For a head-to-head test, `--export` writes every benchmark location to
-`bench-locations/*.kfr`, which you can open in KF2 and time.
+`bench-locations/*.kfr`. Fraktaler 3 imports `.kfr` locations (but not their
+palettes), so you can render the same views there and compare.
 
 ## Accuracy
 
@@ -136,13 +137,13 @@ cargo run --release -p fracst [location.kfr | image.png]
 
 The side panel covers:
 
-- **Location**: arbitrary-precision coordinates, plus KFR copy and paste.
+- **Location**: arbitrary-precision coordinates, plus copy and paste as `.kfr` text.
 - **Find minibrot**: Newton's method.
 - **Auto iterations**.
 - **Colouring**: palette presets, a random palette, editable key colours,
   `IterDiv`, offset, transfer function, slopes and interior colour.
-- **Rendering**: resolution scale, BLA, interior detection, bailout and
-  reference reuse.
+- **Rendering**: resolution scale, BLA, interior detection, reference snapping,
+  bailout and reference reuse.
 - **Export**: any size with supersampling.
 - **Statistics**: per-stage timings, BLA skip factor and iteration range.
 
@@ -152,7 +153,7 @@ Slow frames get a quarter-resolution preview first.
 ### Command line (`fracst-cli`)
 
 ```
-# Render a KF2 location (or a PNG saved by KF2/fracst) at 1080p with 2x2 supersampling
+# Render a location (or a PNG with an embedded location) at 1080p with 2x2 supersampling
 fracst-cli location.kfr -W 1920 -H 1080 --supersample 2 -o out.png
 
 # Coordinates directly, any number of digits
@@ -161,7 +162,7 @@ fracst-cli --re -0.7436438870371587 --im 0.1318259042053120 --zoom 1e12 -i 50000
 # Jump to the nearest minibrot and frame it at 1/4 of the image height
 fracst-cli location.kfr --find-minibrot --mini-zoom 0.25 --save-kfr -o mini.png
 
-# KF2-style zoom-out sequence for videos (reuses the reference orbit throughout)
+# Zoom-out sequence for videos (reuses the reference orbit throughout)
 fracst-cli deep.kfr --zoom-out 500 --zoom-out-factor 2 -o frames/zoom.png
 ```
 
@@ -173,14 +174,16 @@ fracst-cli deep.kfr --zoom-out 500 --zoom-out-factor 2 -o frames/zoom.png
 cargo run --release -p fracst-core --example bench [-- --baseline] [--export]
 ```
 
-## KF2 compatibility
+## Location files
 
-Read and written: `Re`, `Im`, `Zoom` (any exponent), `Iterations`, `IterDiv`,
+Locations are stored as `.kfr` text, one `Key: value` per line. Read and
+written: `Re`, `Im`, `Zoom` (any exponent), `Iterations`, `IterDiv`,
 `ColorOffset`, `ColorMethod` (0 linear, 1 sqrt, 2 cbrt, 3 log, 9 log-log, 11 fourth root),
-`Colors` and `InteriorColor` (KF2's B,G,R order), `Smooth`, `Flat`, `Slopes`,
-`SlopePower`, `SlopeRatio`, `SlopeAngle`, and `ImagPointsUp`. KF2's default
-imaginary axis points down, and files without `ImagPointsUp: 1` render the
-same way KF2 shows them.
+`Colors` and `InteriorColor` (B,G,R order), `Smooth`, `Flat`, `Slopes`,
+`SlopePower`, `SlopeRatio`, `SlopeAngle`, and `ImagPointsUp`. In these files
+the imaginary axis points down unless `ImagPointsUp: 1` is set. fracst
+follows that, and you can toggle it under Rendering → Imaginary axis points down.
+Saved PNGs carry the same text in a `Comment` chunk.
 
 Not supported yet:
 
@@ -208,7 +211,7 @@ crates/fracst        egui explorer (render thread in worker.rs)
   than `f64` steps, and they dominate inside deep minibrots.
 - GPU rendering (wgpu compute).
 - More formulas: Burning Ship, higher powers, hybrids.
-- Distance-estimation colouring and EXR / KFB raw output.
+- Distance-estimation colouring and raw (EXR) output.
 
 ## License
 
