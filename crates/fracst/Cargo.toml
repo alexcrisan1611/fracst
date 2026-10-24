@@ -1,0 +1,13 @@
+[package]
+name = "fracst"
+description = "Interactive deep-zoom Mandelbrot explorer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fracst-core.workspace = true
+eframe.workspace = true
+rfd.workspace = true

@@ -1,0 +1,5 @@
+/target
+/out
+/bench-locations
+*.png
+!assets/*.png

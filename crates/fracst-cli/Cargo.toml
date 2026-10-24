@@ -1,0 +1,16 @@
+[package]
+name = "fracst-cli"
+description = "Command-line renderer for fracst"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "fracst-cli"
+path = "src/main.rs"
+
+[dependencies]
+fracst-core.workspace = true
+clap.workspace = true
