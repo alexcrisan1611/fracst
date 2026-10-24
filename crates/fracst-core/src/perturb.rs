@@ -19,6 +19,7 @@ use crate::bla::BlaTable;
 use crate::floatexp::FloatExp;
 use crate::num::{CExp, Complex, Cplx, Real};
 use crate::reference::Reference;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// `|dz|^2` above which a deep pixel switches to `f64` (`|dz| > 2^-480`). At
 /// that size `dz^2` and `2 Z dz` stay normal doubles, and a dropped `dc` below
@@ -147,7 +148,7 @@ enum Exit {
     Escaped(Complex<f64>),
     Stopped,
     Switch,
-    /// One iteration done (only with `ONE`).
+    /// The next step would be a plain perturbation step (only with `UNTIL_PLAIN`).
     Yield,
 }
 
@@ -169,7 +170,7 @@ fn run<
     const DOWN: bool,
     const DEEP: bool,
     const FMA: bool,
-    const ONE: bool,
+    const UNTIL_PLAIN: bool,
 >(
     reference: &Reference,
     z_at: impl Fn(usize) -> C,
@@ -251,6 +252,10 @@ fn run<
                 dw_exp -= DW_STEP;
             }
         }
+        if UNTIL_PLAIN && (m == 0 || !(dzn < p.bla.max_r2())) {
+            // Nothing left to decide: hand the plain step back (to the SIMD loop).
+            break Exit::Yield;
+        }
         steps += 1;
         let bla = if DEEP { p.bla.lookup_longest(m, dzn, maxiter - n) } else { p.bla.lookup(m, dzn, maxiter - n) };
         if let Some(b) = bla {
@@ -278,9 +283,6 @@ fn run<
             n += 1;
         }
         zm = z_at(m);
-        if ONE {
-            break Exit::Yield;
-        }
     };
     *st = State { dz, der, dw, dw_exp, dw_active, dw_below, dw_start, m, n, steps };
     exit
@@ -359,40 +361,68 @@ fn iterate_f64_impl<const DE: bool, const INSIDE: bool, const FMA: bool>(
     finish(&st, exit, 0)
 }
 
-/// Iterate many pixels entirely in `f64`, one per entry of `dcs`, into `out`.
-/// `p.dc` is ignored. With `simd` on a CPU with AVX2 and FMA (and without
-/// distance estimation) four pixels advance together; the results are the
-/// same as [`iterate_f64`] gives for each pixel.
+/// Decides, for one frame, whether the SIMD pixel loop pays: it pools how
+/// many lane steps ran in registers against how many lane events (escape,
+/// rebase, BLA, ...) sent lanes back to the scalar loop. Each event costs
+/// about `EVENT_COST` plain steps, so frames full of short orbits or long
+/// BLA phases are better off scalar.
+#[derive(Debug, Default)]
+pub struct SimdGauge {
+    vector_steps: AtomicU64,
+    events: AtomicU64,
+}
+
+/// Plain lane steps one lane event must be worth for SIMD to pay.
+const EVENT_COST: u64 = 16;
+
+impl SimdGauge {
+    fn worthwhile(&self) -> bool {
+        let events = self.events.load(Ordering::Relaxed);
+        // Too few samples yet to rule SIMD out.
+        events < 4096 || events * EVENT_COST <= self.vector_steps.load(Ordering::Relaxed)
+    }
+
+    fn record(&self, vector_steps: u64, events: u64) {
+        self.vector_steps.fetch_add(vector_steps, Ordering::Relaxed);
+        self.events.fetch_add(events, Ordering::Relaxed);
+    }
+}
+
+/// Iterate many pixels entirely in `f64`, one per entry of `dcs`, passing
+/// each result to `emit` with its index (in any order). `p.dc` is ignored.
+/// With a `gauge` on a CPU with AVX2 and FMA (and without distance
+/// estimation), four pixels advance together while the gauge says it pays;
+/// the results are the same as [`iterate_f64`] gives for each pixel.
 pub fn iterate_f64_batch(
     reference: &Reference,
     p: &Phase<Complex<f64>>,
     dcs: &[Complex<f64>],
     maxiter: u64,
     extras: Extras,
-    simd: bool,
-    out: &mut [PixelResult],
+    gauge: Option<&SimdGauge>,
+    emit: &mut dyn FnMut(usize, PixelResult),
 ) {
-    assert_eq!(dcs.len(), out.len());
     #[cfg(target_arch = "x86_64")]
-    if simd
+    if let Some(gauge) = gauge
         && !extras.distance_estimate
         && std::arch::is_x86_feature_detected!("avx2")
         && std::arch::is_x86_feature_detected!("fma")
+        && gauge.worthwhile()
     {
         // SAFETY: AVX2 and FMA are available, checked just above.
         unsafe {
             if extras.interior_detection {
-                avx2::batch::<true>(reference, p, dcs, maxiter, out);
+                avx2::batch::<true>(reference, p, dcs, maxiter, gauge, emit);
             } else {
-                avx2::batch::<false>(reference, p, dcs, maxiter, out);
+                avx2::batch::<false>(reference, p, dcs, maxiter, gauge, emit);
             }
         }
         return;
     }
-    let _ = simd;
-    for (dc, r) in dcs.iter().zip(out.iter_mut()) {
+    let _ = gauge;
+    for (i, dc) in dcs.iter().enumerate() {
         let phase = Phase { bla: p.bla, dc: *dc, spacing: p.spacing, bailout2: p.bailout2, switch2: p.switch2 };
-        *r = iterate_f64(reference, &phase, maxiter, extras);
+        emit(i, iterate_f64(reference, &phase, maxiter, extras));
     }
 }
 
@@ -532,15 +562,20 @@ mod avx2 {
     /// perturbation step with nothing to decide) advance together in AVX2
     /// registers. A lane with anything else to do (escape, rebase, a
     /// possible BLA step, interior checks, rescaling, its iteration limit)
-    /// takes that iteration through the scalar loop, so every pixel gets
-    /// exactly the operations the scalar FMA path would perform.
+    /// runs the scalar loop until its next step is plain again, so every
+    /// pixel gets exactly the operations the scalar FMA path would perform.
+    ///
+    /// Leaving and re-entering the registers costs several plain steps, so
+    /// when events come too often (short orbits, long BLA phases) the rest
+    /// of the batch runs on the scalar loop instead.
     #[target_feature(enable = "avx2,fma")]
     pub(super) unsafe fn batch<const INSIDE: bool>(
         reference: &Reference,
         p: &Phase<Complex<f64>>,
         dcs: &[Complex<f64>],
         maxiter: u64,
-        out: &mut [PixelResult],
+        gauge: &SimdGauge,
+        emit: &mut dyn FnMut(usize, PixelResult),
     ) {
         let periodic = reference.truncated.is_some();
         let two_pass = INSIDE && !periodic && maxiter > 2 * INTERIOR_START;
@@ -570,8 +605,9 @@ mod avx2 {
             lane.cap = maxiter;
             lane.first_pass = false;
         };
-        // One scalar iteration; true once the lane's pixel is finished.
-        let step = |lane: &mut Lane, out: &mut [PixelResult]| -> bool {
+        // Scalar iterations until the lane's next step is a plain one; true
+        // once the lane's pixel is finished.
+        let step = |lane: &mut Lane, emit: &mut dyn FnMut(usize, PixelResult)| -> bool {
             let ph = phase(dcs[lane.pixel]);
             match run::<_, false, INSIDE, false, false, false, true, true>(
                 reference,
@@ -587,13 +623,13 @@ mod avx2 {
                     false
                 }
                 exit => {
-                    out[lane.pixel] = finish(&lane.st, exit, 0);
+                    emit(lane.pixel, finish(&lane.st, exit, 0));
                     true
                 }
             }
         };
         // Run a lane to completion with the scalar loop.
-        let complete = |lane: &mut Lane, out: &mut [PixelResult]| loop {
+        let complete = |lane: &mut Lane, emit: &mut dyn FnMut(usize, PixelResult)| loop {
             let ph = phase(dcs[lane.pixel]);
             let exit = run::<_, false, INSIDE, false, false, false, true, false>(
                 reference,
@@ -607,18 +643,20 @@ mod avx2 {
                 restart(lane);
                 continue;
             }
-            out[lane.pixel] = finish(&lane.st, exit, 0);
+            emit(lane.pixel, finish(&lane.st, exit, 0));
             break;
         };
 
         if dcs.len() < 4 {
             for pixel in 0..dcs.len() {
-                complete(&mut start(pixel), out);
+                complete(&mut start(pixel), emit);
             }
             return;
         }
         let mut lanes = [start(0), start(1), start(2), start(3)];
         let mut next = 4;
+        // Vector iterations (four lane steps each) and lane events so far.
+        let (mut vector_iterations, mut events_seen) = (0u64, 0u64);
 
         let orbit = reference.orbit().as_ptr() as *const f64;
         let mref = _mm256_set1_epi64x(reference.last_index() as i64);
@@ -679,6 +717,7 @@ mod avx2 {
                 if bits != 0 {
                     break bits;
                 }
+                vector_iterations += 1;
                 if INSIDE {
                     // dw = (2 z) dw, an unfused complex product as in the scalar loop.
                     let z2r = _mm256_mul_pd(xr, two);
@@ -723,7 +762,7 @@ mod avx2 {
             // Lanes with an event take this iteration through the scalar loop.
             let mut live = [true; 4];
             for (k, lane) in lanes.iter_mut().enumerate() {
-                if events & (1 << k) != 0 && step(lane, out) {
+                if events & (1 << k) != 0 && step(lane, emit) {
                     if next < dcs.len() {
                         *lane = start(next);
                         next += 1;
@@ -732,12 +771,18 @@ mod avx2 {
                     }
                 }
             }
-            if live.contains(&false) {
-                // No pixels left to refill with: finish the rest one by one.
+            events_seen += events.count_ones() as u64;
+            let worthwhile = next < 16 || events_seen * EVENT_COST <= vector_iterations * 4;
+            if live.contains(&false) || !worthwhile {
+                gauge.record(vector_iterations * 4, events_seen);
+                // Out of pixels, or SIMD isn't paying: finish on the scalar loop.
                 for (lane, live) in lanes.iter_mut().zip(live) {
                     if live {
-                        complete(lane, out);
+                        complete(lane, emit);
                     }
+                }
+                for pixel in next..dcs.len() {
+                    complete(&mut start(pixel), emit);
                 }
                 return;
             }

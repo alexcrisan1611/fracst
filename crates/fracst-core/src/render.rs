@@ -240,7 +240,8 @@ struct Pass<'a> {
     log_bailout: f64,
     extras: Extras,
     limit: u64,
-    simd: bool,
+    /// Present when SIMD is enabled: decides per frame whether it pays.
+    simd: Option<perturb::SimdGauge>,
 }
 
 /// One pixel's stored result: `(n, frac, de)`.
@@ -282,17 +283,19 @@ impl Pass<'_> {
         Phase { bla: self.bla64, dc, spacing: self.spacing.to_f64(), bailout2: self.bailout2, switch2: 0.0 }
     }
 
-    /// Iterate a list of pixels: batched (SIMD where possible) in `f64`
-    /// mode, one by one for deep zooms.
-    fn pixels(&self, coords: impl Iterator<Item = (u32, u32)>) -> Vec<PixelResult> {
+    /// Iterate a list of pixels, passing each result to `emit` with its
+    /// position in the list (in any order): batched (SIMD where it pays) in
+    /// `f64` mode, one by one for deep zooms.
+    fn pixels(&self, coords: impl Iterator<Item = (u32, u32)>, emit: &mut dyn FnMut(usize, PixelResult)) {
         if self.deep {
-            return coords.map(|(x, y)| self.pixel(x, y)).collect();
+            for (k, (x, y)) in coords.enumerate() {
+                emit(k, self.pixel(x, y));
+            }
+            return;
         }
         let dcs: Vec<Complex<f64>> = coords.map(|(x, y)| self.dc64(x, y)).collect();
-        let mut out = vec![PixelResult::default(); dcs.len()];
         let phase = self.phase64(Complex::ZERO);
-        perturb::iterate_f64_batch(self.reference, &phase, &dcs, self.limit, self.extras, self.simd, &mut out);
-        out
+        perturb::iterate_f64_batch(self.reference, &phase, &dcs, self.limit, self.extras, self.simd.as_ref(), emit);
     }
 
     fn store(&self, r: &PixelResult) -> Out {
@@ -470,7 +473,7 @@ impl Renderer {
                 log_bailout: s.bailout.ln(),
                 extras,
                 limit,
-                simd: s.simd,
+                simd: s.simd.then(perturb::SimdGauge::default),
             };
             match &todo {
                 None => render_all(&pass, &mut frame, &counters, progress),
@@ -617,16 +620,15 @@ fn render_all(pass: &Pass, frame: &mut Frame, counters: &Counters, progress: &Pr
                 return;
             }
             let (mut it, mut st, mut dst) = (0, 0, 0);
-            let results = pass.pixels((0..w as u32).map(|x| (x, y as u32)));
-            for (x, r) in results.iter().enumerate() {
+            pass.pixels((0..w as u32).map(|x| (x, y as u32)), &mut |x, r| {
                 (it, st, dst) = (it + r.n, st + r.steps, dst + r.deep_steps);
-                let (n, frac, de) = pass.store(r);
+                let (n, frac, de) = pass.store(&r);
                 row_n[x] = n;
                 row_frac[x] = frac;
                 if let Some(d) = row_de.get_mut(x) {
                     *d = de;
                 }
-            }
+            });
             counters.add(it, st, dst);
             progress.done.fetch_add(1, Ordering::Relaxed);
         },
@@ -645,15 +647,12 @@ fn render_some(pass: &Pass, frame: &mut Frame, list: &[u32], counters: &Counters
             let out: Vec<(u32, Out)> = if progress.cancelled() {
                 Vec::new()
             } else {
-                let results = pass.pixels(chunk.iter().map(|&i| (i % w, i / w)));
-                chunk
-                    .iter()
-                    .zip(&results)
-                    .map(|(&i, r)| {
-                        (it, st, dst) = (it + r.n, st + r.steps, dst + r.deep_steps);
-                        (i, pass.store(r))
-                    })
-                    .collect()
+                let mut out = Vec::with_capacity(chunk.len());
+                pass.pixels(chunk.iter().map(|&i| (i % w, i / w)), &mut |k, r| {
+                    (it, st, dst) = (it + r.n, st + r.steps, dst + r.deep_steps);
+                    out.push((chunk[k], pass.store(&r)));
+                });
+                out
             };
             counters.add(it, st, dst);
             progress.done.fetch_add(1, Ordering::Relaxed);
