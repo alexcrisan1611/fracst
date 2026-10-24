@@ -122,7 +122,9 @@ impl Real for FloatExp {
     }
 }
 
+// `repr(C)`: the SIMD pixel loop gathers `re`/`im` pairs straight from orbit arrays.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
+#[repr(C)]
 pub struct Complex<T> {
     pub re: T,
     pub im: T,

@@ -184,6 +184,11 @@ impl Reference {
         self.orbit.len() - 1
     }
 
+    /// The whole orbit in `f64` (see [`Reference::z`]).
+    pub fn orbit(&self) -> &[Complex<f64>] {
+        &self.orbit
+    }
+
     #[inline(always)]
     pub fn z(&self, m: usize) -> Complex<f64> {
         self.orbit[m]

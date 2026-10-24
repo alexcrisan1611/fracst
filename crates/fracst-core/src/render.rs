@@ -92,6 +92,9 @@ pub struct Settings {
     /// Move the reference onto a minibrot nucleus near the view when there
     /// is one (see the module docs).
     pub periodic_reference: bool,
+    /// Iterate four `f64` pixels at once with AVX2 where the CPU has it.
+    /// Results are identical either way.
+    pub simd: bool,
 }
 
 impl Default for Settings {
@@ -108,6 +111,7 @@ impl Default for Settings {
             auto_iterations: false,
             max_iterations: 1 << 28,
             periodic_reference: true,
+            simd: true,
         }
     }
 }
@@ -236,6 +240,7 @@ struct Pass<'a> {
     log_bailout: f64,
     extras: Extras,
     limit: u64,
+    simd: bool,
 }
 
 /// One pixel's stored result: `(n, frac, de)`.
@@ -262,11 +267,32 @@ impl Pass<'_> {
             };
             perturb::iterate_deep(self.reference, &deep_phase, &shallow_phase, self.limit, self.extras)
         } else {
-            let spacing = self.spacing.to_f64();
-            let dc = self.offset.to_f64() + Complex::new(spacing * px, spacing * py);
-            let phase = Phase { bla: self.bla64, dc, spacing, bailout2: self.bailout2, switch2: 0.0 };
+            let phase = self.phase64(self.dc64(x, y));
             perturb::iterate_f64(self.reference, &phase, self.limit, self.extras)
         }
+    }
+
+    fn dc64(&self, x: u32, y: u32) -> Complex<f64> {
+        let (px, py) = self.view.pixel_offset(x as f64 + 0.5, y as f64 + 0.5, self.width, self.height);
+        let spacing = self.spacing.to_f64();
+        self.offset.to_f64() + Complex::new(spacing * px, spacing * py)
+    }
+
+    fn phase64(&self, dc: Complex<f64>) -> Phase<'_, Complex<f64>> {
+        Phase { bla: self.bla64, dc, spacing: self.spacing.to_f64(), bailout2: self.bailout2, switch2: 0.0 }
+    }
+
+    /// Iterate a list of pixels: batched (SIMD where possible) in `f64`
+    /// mode, one by one for deep zooms.
+    fn pixels(&self, coords: impl Iterator<Item = (u32, u32)>) -> Vec<PixelResult> {
+        if self.deep {
+            return coords.map(|(x, y)| self.pixel(x, y)).collect();
+        }
+        let dcs: Vec<Complex<f64>> = coords.map(|(x, y)| self.dc64(x, y)).collect();
+        let mut out = vec![PixelResult::default(); dcs.len()];
+        let phase = self.phase64(Complex::ZERO);
+        perturb::iterate_f64_batch(self.reference, &phase, &dcs, self.limit, self.extras, self.simd, &mut out);
+        out
     }
 
     fn store(&self, r: &PixelResult) -> Out {
@@ -444,6 +470,7 @@ impl Renderer {
                 log_bailout: s.bailout.ln(),
                 extras,
                 limit,
+                simd: s.simd,
             };
             match &todo {
                 None => render_all(&pass, &mut frame, &counters, progress),
@@ -590,10 +617,10 @@ fn render_all(pass: &Pass, frame: &mut Frame, counters: &Counters, progress: &Pr
                 return;
             }
             let (mut it, mut st, mut dst) = (0, 0, 0);
-            for x in 0..w {
-                let r = pass.pixel(x as u32, y as u32);
+            let results = pass.pixels((0..w as u32).map(|x| (x, y as u32)));
+            for (x, r) in results.iter().enumerate() {
                 (it, st, dst) = (it + r.n, st + r.steps, dst + r.deep_steps);
-                let (n, frac, de) = pass.store(&r);
+                let (n, frac, de) = pass.store(r);
                 row_n[x] = n;
                 row_frac[x] = frac;
                 if let Some(d) = row_de.get_mut(x) {
@@ -618,12 +645,13 @@ fn render_some(pass: &Pass, frame: &mut Frame, list: &[u32], counters: &Counters
             let out: Vec<(u32, Out)> = if progress.cancelled() {
                 Vec::new()
             } else {
+                let results = pass.pixels(chunk.iter().map(|&i| (i % w, i / w)));
                 chunk
                     .iter()
-                    .map(|&i| {
-                        let r = pass.pixel(i % w, i / w);
+                    .zip(&results)
+                    .map(|(&i, r)| {
                         (it, st, dst) = (it + r.n, st + r.steps, dst + r.deep_steps);
-                        (i, pass.store(&r))
+                        (i, pass.store(r))
                     })
                     .collect()
             };

@@ -86,6 +86,11 @@ impl<C: Cplx> BlaTable<C> {
         BlaTable { levels, max_r2 }
     }
 
+    /// Largest `r2` of the first level: no step is valid for larger `|dz|^2`.
+    pub fn max_r2(&self) -> C::R {
+        self.max_r2
+    }
+
     /// An empty table: every lookup fails (plain perturbation).
     pub fn empty() -> Self {
         BlaTable { levels: Vec::new(), max_r2: C::R::ZERO }
