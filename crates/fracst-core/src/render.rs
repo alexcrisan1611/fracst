@@ -75,9 +75,8 @@ pub struct Settings {
     /// Escape radius. Large values give smoother colouring.
     pub bailout: f64,
     pub bla: bool,
-    /// Relative error tolerated per linearised step. Fraktaler 3 uses 2^-24,
-    /// which visibly misplaces pixels near some minibrots; 2^-40 costs a few
-    /// percent more steps.
+    /// Relative error tolerated per linearised step. 2^-24 visibly misplaces
+    /// pixels near some minibrots; 2^-40 costs only a few percent more steps.
     pub bla_epsilon: f64,
     /// Track derivatives for distance estimation (slower).
     pub distance_estimate: bool,

@@ -2,13 +2,12 @@
 
 # fracst
 
-A fast deep-zoom Mandelbrot set explorer written in modern Rust: an
-alternative to [Fraktaler 3](https://fraktaler.mathr.co.uk/) focused on the
-Mandelbrot set, with automatic iteration limits and minibrot-aware references.
+A fast deep-zoom Mandelbrot set explorer written in modern Rust, with
+automatic iteration limits and minibrot-aware references.
 
 - Zoom to 10^1000 and beyond, interactively.
-- Opens and saves `.kfr` location files (Fraktaler 3 can import them), and
-  embeds the location in saved PNGs so images can be reopened.
+- Opens and saves `.kfr` location files, and embeds the location in saved
+  PNGs so images can be reopened.
 - Palette colouring: 1024-entry palettes interpolated from key colours,
   `IterDiv`, `ColorOffset`, transfer functions, and neighbour-difference slope shading.
 - Newton's method minibrot finder ("jump to the nearest minibrot").
@@ -27,29 +26,32 @@ SmartScreen asks. On macOS right-click the app and choose **Open** the first tim
 To build from source instead, install [Rust](https://rustup.rs) and run
 `cargo run --release -p fracst`.
 
-## How it compares with Fraktaler 3
+## How it works
 
-Both render with perturbation, *bilinear approximation* (BLA), which skips
-iterations anywhere along the orbit in steps of up to 2^k, and *rebasing*,
-which needs only one reference orbit and avoids glitches by construction.
-Where they differ:
+fracst uses perturbation theory. It computes one reference orbit in high
+precision, then iterates every pixel as a small offset from it in fast
+hardware arithmetic. On top of that:
 
-| | Fraktaler 3 | fracst |
-|---|---|---|
-| Reference orbit | Image centre. A known period can be locked by hand | **Snaps to a nearby minibrot's nucleus** (Newton's method) and stops after one period |
-| Iteration limit | Set by hand | **Automatic**: predicted from nearby minibrots, corrected per frame (see below) |
-| Interior detection | Derivative with respect to z₁ | **Cycle multiplier at period ends** with a periodic reference, z₁ derivative otherwise |
-| Past 1e300 | One extended number type for the whole frame | Extended range (shared-exponent complex) **only while a pixel's offset is tiny**, then plain `f64` |
-| BLA tolerance | 2^-24 | 2^-40 by default (see Accuracy) |
-| Reference arithmetic | MPFR | Custom fixed-point bignum (squarings only, truncated products) |
-| Formulas | Mandelbrot, Burning Ship, hybrids and more | Mandelbrot z² + c only |
-| GPU | OpenCL | CPU only, for now |
+- **Bilinear approximation (BLA)** skips iterations anywhere along the orbit,
+  in steps of up to 2^k.
+- **Rebasing.** When a pixel's orbit comes closer to zero than to the
+  reference, the pixel restarts against the beginning of the reference. One
+  reference serves the whole image, and glitches can't happen.
+- **Nucleus-snapped reference.** When a minibrot is near the view, the
+  reference moves onto its nucleus (found with Newton's method), so its orbit
+  stops after one period.
+- **Automatic iteration limits**, predicted from nearby minibrots and
+  corrected per frame (see below).
+- **Interior detection.** With a periodic reference it checks the cycle
+  multiplier at the end of each period, which stays reliable deep inside
+  minibrots. Otherwise it uses the derivative with respect to z₁.
+- **Extended range only where it's needed.** Shared-exponent complex
+  numbers are used while a pixel's offset is below 2^-480, and plain `f64`
+  after that.
+- **Reference arithmetic** uses a custom fixed-point bignum: squarings only,
+  with truncated products.
 
-BLA and rebasing were introduced by Zhuoran on fractalforums. The theory is
-written up by Claude Heiland-Allen in [deep zoom theory and practice](https://mathr.co.uk/web/deep-zoom.html)
-and used in his [Fraktaler 3](https://fraktaler.mathr.co.uk/). fracst
-implements these published algorithms independently and contains no code from
-Fraktaler 3.
+BLA and rebasing are due to Zhuoran.
 
 ## Automatic iterations
 
@@ -86,12 +88,12 @@ laptop (boost clocks and thermals).
 
 | Location | Zoom | Avg iterations | fracst | Plain perturbation | Speedup |
 |---|---|---:|---:|---:|---:|
-| Overview | 1 | 11 | 0.02 s | 0.05 s | 2× |
-| Seahorse minibrot | 3e8 | 2,929 | 2.6 s | 3.4 s | ~1× |
-| Spiral | 2e238 | 2,186 | 0.13 s | 2.2 s | 17× |
-| Spiral | 8e397 | 4,024 | 0.25 s | 19.4 s | 76× |
-| Spiral | 1e998 | 11,769 | 0.35 s | 57.8 s | 165× |
-| Inside a minibrot (21% interior, 1M max iterations) | 2e400 | 136,874 | 6.0 s | not run | — |
+| Overview | 1 | 11 | 0.03 s | 0.05 s | 2× |
+| Seahorse minibrot | 3e8 | 3,243 | 2.6 s | 3.4 s | ~1× |
+| Spiral | 2e238 | 2,186 | 0.16 s | 2.2 s | 14× |
+| Spiral | 8e397 | 4,025 | 0.30 s | 19.4 s | 65× |
+| Spiral | 1e998 | 11,764 | 0.38 s | 57.8 s | 150× |
+| Inside a minibrot (21% interior, 1M max iterations) | 2e400 | 20,830 | 0.97 s | not run | — |
 
 "Plain perturbation" is the same engine with BLA and interior detection
 turned off (one reference with rebasing). It shows what the iteration
@@ -99,9 +101,8 @@ skipping buys, and is not a comparison with another program. At shallow
 zooms such as the seahorse row, BLA cannot skip anything and fracst runs at
 plain perturbation speed.
 
-For a head-to-head test, `--export` writes every benchmark location to
-`bench-locations/*.kfr`. Fraktaler 3 imports `.kfr` locations (but not their
-palettes), so you can render the same views there and compare.
+`--export` writes every benchmark location to `bench-locations/*.kfr`, so
+you can render the same views again with other settings or later versions.
 
 ## Accuracy
 
@@ -112,9 +113,9 @@ the same points at higher precision. The renders must agree on the escape
 iteration, and interior detection may not flag any pixel that escapes. All
 of these run with and without BLA.
 
-The BLA tolerance defaults to ε = 2^-40. Fraktaler 3 hard-codes 2^-24, but
-in the tests it misplaced more than 1% of pixels near a minibrot. The
-tighter tolerance costs only a few percent more steps. You can change it in
+The BLA tolerance defaults to ε = 2^-40. A looser 2^-24 misplaced more
+than 1% of pixels near a minibrot in the tests. The tighter tolerance costs
+only a few percent more steps. You can change it in
 the GUI (Rendering → BLA precision bits) or with `--bla-bits`.
 
 ## Usage

@@ -13,7 +13,7 @@
 //! Optional extras: the derivative `dz/dc` (scaled by the pixel spacing) for
 //! distance estimation, and interior detection, which tracks `dz_n/dz_1` and
 //! stops once it falls below [`INTERIOR_RADIUS2`] (the pixel is attracted to
-//! a cycle, as in Fraktaler 3).
+//! a cycle).
 
 use crate::bla::BlaTable;
 use crate::floatexp::FloatExp;
@@ -26,7 +26,7 @@ use crate::reference::Reference;
 const SWITCH_NORM: f64 = f64::from_bits((1023 - 960) << 52);
 
 /// Interior detection threshold on the squared derivative of the orbit with
-/// respect to an earlier iterate (Fraktaler 3's inscape radius of 1/1024).
+/// respect to an earlier iterate (an inscape radius of 1/1024).
 pub const INTERIOR_RADIUS2: f64 = 1.0 / (1024.0 * 1024.0);
 
 /// Interior detection comes in two flavours:
@@ -39,7 +39,7 @@ pub const INTERIOR_RADIUS2: f64 = 1.0 / (1024.0 * 1024.0);
 ///   the cycle. Checking only whole periods matters: mid-period, exterior
 ///   orbits dip far below the threshold as they pass near zero, and deep
 ///   minibrots grow the derivative by huge factors before it settles.
-/// * Otherwise, as in Fraktaler 3, `|dz_n/dz_1|` is checked every iteration.
+/// * Otherwise `|dz_n/dz_1|` is checked every iteration.
 ///   With high limits pixels first run to `INTERIOR_START` without it; only
 ///   those still going restart from `z_1` with it (cheap with BLA), so most
 ///   exterior pixels never pay for the extra derivative.

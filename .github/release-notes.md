@@ -1,4 +1,4 @@
-Prebuilt 64-bit packages of **fracst**, a fast deep-zoom Mandelbrot explorer and an alternative to Fraktaler 3. Each package contains the explorer (`fracst`), the command-line renderer (`fracst-cli`), the README and the licenses.
+Prebuilt 64-bit packages of **fracst**, a fast deep-zoom Mandelbrot explorer. Each package contains the explorer (`fracst`), the command-line renderer (`fracst-cli`), the README and the licenses.
 
 | Platform | Download | Notes |
 |---|---|---|

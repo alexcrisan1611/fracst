@@ -4,7 +4,7 @@
 //! so no data files are needed. `--baseline` also renders each location with
 //! BLA and interior detection disabled (plain perturbation with rebasing).
 //! `--export` writes the locations to `bench-locations/*.kfr` so the same
-//! views can be timed in other renderers (Fraktaler 3 imports `.kfr`).
+//! views can be rendered again with other settings or later versions.
 
 use fracst_core::{Colouring, FloatExp, Progress, Renderer, Settings, View, kfr, newton};
 use std::time::Instant;
