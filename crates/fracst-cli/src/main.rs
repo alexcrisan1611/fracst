@@ -42,6 +42,9 @@ struct Args {
     /// nearby minibrot nucleus.
     #[arg(long)]
     no_snap: bool,
+    /// Don't use the AVX2 pixel loop (results are identical either way).
+    #[arg(long)]
+    no_simd: bool,
     /// Disable interior detection (iterate interior pixels to the limit).
     #[arg(long)]
     no_interior: bool,
@@ -130,6 +133,7 @@ fn run(args: Args) -> Result<(), String> {
         bla: !args.no_bla,
         bla_epsilon: 0.5f64.powi(args.bla_bits as i32),
         interior_detection: !args.no_interior,
+        simd: !args.no_simd,
         auto_iterations: args.auto_iterations,
         periodic_reference: !args.no_snap,
         distance_estimate: args.de,

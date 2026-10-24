@@ -406,6 +406,8 @@ impl App {
             self.settings.bla_epsilon = 0.5f64.powi(bits as i32);
         }
         ui.add(Slider::new(&mut self.settings.bailout, 2.0..=1e6).logarithmic(true).text("bailout"));
+        ui.checkbox(&mut self.settings.simd, "SIMD (AVX2)")
+            .on_hover_text("Iterate four pixels at once where it pays; the image is identical either way");
         ui.checkbox(&mut self.settings.interior_detection, "Interior detection")
             .on_hover_text("Stop iterating pixels that are attracted to a cycle (big win inside minibrots)");
         ui.checkbox(&mut self.settings.periodic_reference, "Snap reference to nearby minibrot").on_hover_text(

@@ -47,11 +47,21 @@ hardware arithmetic. On top of that:
   minibrots. Otherwise it uses the derivative with respect to z₁.
 - **Extended range only where it's needed.** Shared-exponent complex
   numbers are used while a pixel's offset is below 2^-480, and plain `f64`
-  after that.
+  after that. In extended range the orbit is precomputed in that format,
+  and escape and rebase tests are skipped wherever they provably can't
+  fire.
+- **SIMD and FMA.** On CPUs with AVX2, four `f64` pixels advance together.
+  A pixel that needs a decision (escape, rebase, a possible BLA skip, an
+  interior check) takes that step through the scalar loop, so images are
+  bit-identical. A per-frame gauge switches SIMD off where those events
+  would cost more than they save. Fused multiply-adds are chosen at
+  runtime.
 - **Reference arithmetic** uses a custom fixed-point bignum: squarings only,
   with truncated products.
 
-BLA and rebasing are due to Zhuoran.
+BLA and rebasing are due to Zhuoran. [docs/performance.md](docs/performance.md)
+records which speed-ups were tried, how they were measured, and which were
+kept.
 
 ## Automatic iterations
 
@@ -89,15 +99,16 @@ laptop (boost clocks and thermals).
 | Location | Zoom | Avg iterations | fracst | Plain perturbation | Speedup |
 |---|---|---:|---:|---:|---:|
 | Overview | 1 | 11 | 0.03 s | 0.05 s | 2× |
-| Seahorse minibrot | 3e8 | 3,243 | 2.6 s | 3.4 s | ~1× |
-| Spiral | 2e238 | 2,186 | 0.16 s | 2.2 s | 14× |
-| Spiral | 8e397 | 4,025 | 0.30 s | 19.4 s | 65× |
-| Spiral | 1e998 | 11,764 | 0.38 s | 57.8 s | 150× |
-| Inside a minibrot (21% interior, 1M max iterations) | 2e400 | 20,830 | 0.97 s | not run | — |
+| Seahorse minibrot | 3e8 | 3,243 | 1.6 s | 1.8 s | 1.1× |
+| Spiral | 2e238 | 2,186 | 0.12 s | 1.2 s | 10× |
+| Spiral | 8e397 | 4,025 | 0.23 s | 16.9 s | 73× |
+| Spiral | 1e998 | 11,764 | 0.29 s | 45.0 s | 156× |
+| Inside a minibrot (21% interior, 1M max iterations) | 2e400 | 20,830 | 0.65 s | not run | — |
 
 "Plain perturbation" is the same engine with BLA and interior detection
-turned off (one reference with rebasing). It shows what the iteration
-skipping buys, and is not a comparison with another program. At shallow
+turned off (one reference with rebasing, still with SIMD and FMA). It shows
+what the iteration skipping buys, and is not a comparison with another
+program. At shallow
 zooms such as the seahorse row, BLA cannot skip anything and fracst runs at
 plain perturbation speed.
 
