@@ -1348,7 +1348,7 @@ dependencies = [
 
 [[package]]
 name = "fracst"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "eframe",
  "fracst-core",
@@ -1359,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "fracst-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "fracst-core",
@@ -1368,7 +1368,7 @@ dependencies = [
 
 [[package]]
 name = "fracst-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "png",
  "rayon",
@@ -1376,7 +1376,7 @@ dependencies = [
 
 [[package]]
 name = "fracst-cuda"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "cc",
  "cudarc",
@@ -1386,7 +1386,7 @@ dependencies = [
 
 [[package]]
 name = "fracst-remote"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "fracst-core",
  "rayon",
@@ -1399,7 +1399,7 @@ dependencies = [
 
 [[package]]
 name = "fracst-server"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "fracst-core",
