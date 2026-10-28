@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=fracst
+GenericName=Mandelbrot explorer
+Comment=Fast deep-zoom Mandelbrot explorer
+Exec=fracst %f
+Icon=fracst
+Terminal=false
+Categories=Graphics;Science;Math;
+MimeType=application/x-fracst-kfr;
+Keywords=fractal;mandelbrot;zoom;

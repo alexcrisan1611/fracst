@@ -68,21 +68,55 @@ jobs:
         shell: bash
         run: |
           cargo build --release --locked -p fracst -p fracst-cli -p fracst-server
+          # A tarball with an install script, for any distribution...
           dist="fracst-$VERSION-linux-x86_64"
           mkdir "$dist"
           cp target/release/fracst target/release/fracst-cli target/release/fracst-server README.md LICENSE-MIT LICENSE-APACHE "$dist/"
+          cp packaging/linux/install.sh packaging/linux/fracst.desktop packaging/linux/fracst.xml "$dist/"
           cp assets/icon.png "$dist/fracst.png"
           tar czf "$dist.tar.gz" "$dist"
+          # ...and a .deb for Debian, Ubuntu and their relatives.
+          deb="debian-root"
+          install -Dm755 -t "$deb/usr/bin" target/release/fracst target/release/fracst-cli target/release/fracst-server
+          install -Dm644 packaging/linux/fracst.desktop "$deb/usr/share/applications/fracst.desktop"
+          install -Dm644 packaging/linux/fracst.xml "$deb/usr/share/mime/packages/fracst.xml"
+          install -Dm644 assets/icon.png "$deb/usr/share/icons/hicolor/512x512/apps/fracst.png"
+          install -Dm644 -t "$deb/usr/share/doc/fracst" README.md LICENSE-MIT LICENSE-APACHE
+          mkdir -p "$deb/DEBIAN"
+          cat > "$deb/DEBIAN/control" <<CONTROL
+          Package: fracst
+          Version: ${VERSION#v}
+          Architecture: amd64
+          Maintainer: Alex Crișan <alexcrisan1611@users.noreply.github.com>
+          Depends: libc6 (>= 2.35), libgcc-s1
+          Recommends: libvulkan1 | libgl1, libxkbcommon0, xdg-desktop-portal
+          Section: graphics
+          Priority: optional
+          Homepage: https://github.com/alexcrisan1611/fracst
+          Description: Fast deep-zoom Mandelbrot explorer
+           fracst explores the Mandelbrot set to extreme zooms, with a
+           command-line renderer (fracst-cli) and a render server for remote
+           GPUs (fracst-server).
+          CONTROL
+          dpkg-deb --build --root-owner-group "$deb" "fracst-$VERSION-linux-amd64.deb"
 
       - name: Build and package (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           cargo build --release --locked -p fracst -p fracst-cli -p fracst-server
+          # A portable zip...
           dist="fracst-$VERSION-windows-x86_64"
           mkdir "$dist"
           cp target/release/fracst.exe target/release/fracst-cli.exe target/release/fracst-server.exe README.md LICENSE-MIT LICENSE-APACHE "$dist/"
           7z a "$dist.zip" "$dist"
+          # ...and an installer (Inno Setup comes with the runner image).
+          version="${VERSION#v}"
+          [[ "$version" =~ ^[0-9]+(\.[0-9]+)*$ ]] || version=0.0.0
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" -Q \
+            "-DAppVersion=$version" "-DSourceDir=$(cygpath -w "$PWD/target/release")" \
+            "-DOutputBase=fracst-$VERSION-windows-x86_64-setup" "-O$(cygpath -w "$PWD")" \
+            packaging/windows/fracst.iss
 
       - name: Build and package (macOS, universal)
         if: runner.os == 'macOS'
@@ -103,13 +137,22 @@ jobs:
           codesign --force --deep --sign - "$dist/fracst.app"
           codesign --force --sign - "$dist/fracst-cli"
           ditto -c -k --keepParent "$dist" "$dist.zip"
+          # A disk image to drag the app into Applications.
+          dmg="dmg-root"
+          mkdir "$dmg"
+          ditto "$dist/fracst.app" "$dmg/fracst.app"
+          ln -s /Applications "$dmg/Applications"
+          hdiutil create -volname fracst -srcfolder "$dmg" -fs HFS+ -format UDZO -ov "$dist.dmg"
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
           path: |
             fracst-*.tar.gz
+            fracst-*.deb
             fracst-*.zip
+            fracst-*.exe
+            fracst-*.dmg
           if-no-files-found: error
 
   release:
