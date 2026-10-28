@@ -28,6 +28,39 @@ FP64 rates (H100, H200, B200) are the ones that pay. Blackwell Ultra parts
 (B300, GB300) and gaming cards run FP64 at a small fraction of their 32-bit
 speed. The kernels compile for them, but don't expect miracles.
 
+## On Modal
+
+`deploy/modal/app.py` runs the same image (`deploy/fal/Dockerfile`, built
+without fal) on Modal, which exposes `fracst-server`'s WebSocket directly:
+
+```
+wss://<workspace>--fracst.modal.run
+```
+
+Modal checks a proxy auth token before anything starts, so nobody else can
+wake a GPU. Create one under Settings → Proxy Auth Tokens; it has an id
+(`wk-…`) and a secret (`ws-…`). In the app's **Key** field, give it as
+`wk-…:ws-…`, or put it on the gateway (below) and hand out fracst keys.
+
+Deploy with the **Deploy to Modal** workflow (Actions tab, or push a
+`modal-deploy-*` tag). It needs a Modal API token as the repository secrets
+`MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`, and runs the GPU self-test after
+deploying. Or from a machine with Python 3.11:
+
+```
+pip install modal
+modal token new
+modal deploy deploy/modal/app.py
+modal run deploy/modal/app.py::selftest     # CPU and GPU must match
+modal run deploy/modal/app.py::bench
+```
+
+The app asks for an H100 and falls back to an H200 or B200; set
+`FRACST_MODAL_GPU` to choose. At most one GPU container runs, serving up to
+eight connections, and it stops five minutes after the last one closes.
+Modal limits WebSocket messages to 2 MiB; frames travel in compressed
+blocks of at most 1 MiB of pixels, so they fit.
+
 ## On fal.ai
 
 `deploy/fal/` holds a fal app: a container image with `fracst-server`
@@ -109,30 +142,29 @@ GPU running. The app never starts more than one runner
 
 ## Sharing it: the Cloudflare gateway
 
-Pasting your fal key into the app works for you alone. To let other
-people render on your GPU, put `gateway/`, a Cloudflare Worker, in front of
-the fal app:
+Pasting your Modal or fal token into the app works for you alone. To let
+other people render on your GPU, put `gateway/`, a Cloudflare Worker, in
+front of it:
 
 ```
-fracst app ──wss, fracst key──> Cloudflare gateway ──wss, fal key──> fal app ──> fracst-server
+fracst app ──wss, fracst key──> Cloudflare gateway ──wss, Modal/fal token──> fracst-server
 ```
 
 The gateway accepts the app's connection with a **fracst key** (`fst_…`),
-opens its own connection to the fal app with your fal key, and relays the
-fracst protocol both ways unchanged. Frames stay exact, and the fal key
-never leaves Cloudflare.
+opens its own connection to the GPU server with your token, and relays the
+fracst protocol both ways unchanged. Frames stay exact, and the token never
+leaves Cloudflare.
 
 - **Keys are per person.** You create one for each person and can revoke it
   at any time. A revoked key's open sessions end within a minute. Only
   SHA-256 hashes of the keys are stored.
 - **Limits.** Each key can have a monthly limit of GPU minutes (connected
-  time, which is roughly what fal bills). Without a limit, usage is still
+  time, which is roughly what Modal or fal bills). Without a limit, usage is still
   counted. A key may have two sessions open at once (`MAX_SESSIONS_PER_KEY`),
   and a session lasts at most two hours (`MAX_SESSION_MINUTES`). The app
   can always reconnect.
-- **Cold starts.** While fal starts a GPU, the gateway keeps the app
-  informed ("Waiting for a GPU on fal.ai… 40 s"), and the Remote GPU panel
-  shows it.
+- **Cold starts.** While a GPU starts, the gateway keeps the app informed
+  ("Waiting for a GPU… 40 s"), and the Remote GPU panel shows it.
 
 It runs on the Workers Free plan. Each connection is a Durable Object, whose
 CPU budget renews with every message, so long sessions are fine. A single
@@ -143,14 +175,16 @@ the binary is public, and anyone could spend your GPU budget with it.
 
 ### Set up the gateway
 
-Deploy the fal app first (above). Then, with a Cloudflare account:
+Deploy the GPU server first (above). Then, with a Cloudflare account:
 
 ```
 cd gateway
 npm install
 npx wrangler login
-#   in wrangler.jsonc, set "FAL_APP": "<your-fal-user>/fracst"
-npx wrangler secret put FAL_KEY        # your fal key
+#   in wrangler.jsonc, set "UPSTREAM_URL": "wss://<workspace>--fracst.modal.run"
+npx wrangler secret put MODAL_KEY      # the proxy auth token's id, wk-…
+npx wrangler secret put MODAL_SECRET   # and its secret, ws-…
+#   (for fal instead: "FAL_APP": "<your-fal-user>/fracst" and FAL_KEY)
 npx wrangler secret put ADMIN_TOKEN    # any long random string, for managing keys
 npx wrangler deploy
 ```

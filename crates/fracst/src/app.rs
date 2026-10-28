@@ -477,14 +477,14 @@ impl App {
                     .desired_width(230.0),
             )
             .on_hover_text(
-                "A fracst gateway's /stream address, a fal.ai deployment's stream endpoint, or ws://host:7878 for a fracst-server",
+                "A fracst gateway's /stream address, a Modal or fal.ai deployment's address, or ws://host:7878 for a fracst-server",
             );
             ui.end_row();
             ui.label("Key");
             ui.add(
                 TextEdit::singleline(&mut self.remote_key)
                     .password(true)
-                    .hint_text("fracst key (fst_…), fal key or server token")
+                    .hint_text("fracst key (fst_…), Modal or fal token")
                     .desired_width(230.0),
             );
             ui.end_row();

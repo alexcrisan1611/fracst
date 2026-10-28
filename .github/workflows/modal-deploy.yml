@@ -1,0 +1,67 @@
+# Deploys the GPU render server (deploy/modal/app.py) to Modal, then runs
+# its self-test on a GPU. Modal builds the image from deploy/fal/Dockerfile
+# on its own machines. Needs the repository secrets MODAL_TOKEN_ID and
+# MODAL_TOKEN_SECRET (a Modal API token).
+#
+# Start it from the Actions tab (Run workflow), or push a modal-deploy-*
+# tag. Deploying costs nothing by itself; the self-test bills a few GPU
+# minutes, and Modal bills while a GPU container is up.
+
+name: Deploy to Modal
+
+on:
+  workflow_dispatch:
+    inputs:
+      gpu:
+        description: Modal GPU types to try, in order
+        default: H100,H200,B200
+      selftest:
+        description: Run the GPU self-test after deploying
+        type: boolean
+        default: true
+  push:
+    tags: ["modal-deploy-*"]
+
+concurrency: modal-deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      FRACST_MODAL_GPU: ${{ inputs.gpu || 'H100,H200,B200' }}
+    defaults:
+      run:
+        # Explicitly bash, for pipefail: a failed step fails the job.
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install modal
+      - name: modal deploy
+        run: |
+          if [ -z "$MODAL_TOKEN_ID" ] || [ -z "$MODAL_TOKEN_SECRET" ]; then
+            echo "::error::Add the repository secrets MODAL_TOKEN_ID and MODAL_TOKEN_SECRET."
+            exit 1
+          fi
+          modal deploy deploy/modal/app.py 2>&1 | tee deploy.log
+          {
+            echo "## modal deploy"
+            echo '```'
+            tail -n 20 deploy.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: GPU self-test
+        if: ${{ github.event_name == 'push' || inputs.selftest }}
+        run: |
+          modal run deploy/modal/app.py::selftest 2>&1 | tee selftest.log
+          {
+            echo "## GPU self-test"
+            echo '```'
+            tail -n 60 selftest.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          grep -q '"ok": true' selftest.log

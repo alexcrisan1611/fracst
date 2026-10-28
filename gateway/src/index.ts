@@ -1,5 +1,6 @@
-// fracst-gateway: lets the fracst app render on the fal.ai GPU server with
-// a fracst key of its own, so the fal key stays here, as a secret.
+// fracst-gateway: lets the fracst app render on the GPU server (on Modal or
+// fal.ai) with a fracst key of its own, so the GPU platform's token stays
+// here, as a secret.
 //
 //   GET  /stream                WebSocket, Authorization: Bearer <fracst key>
 //   GET  /health
@@ -7,8 +8,8 @@
 //   GET  /admin/keys            keys with this month's usage
 //   DELETE /admin/keys/<name>   revoke
 //   GET  /admin/sessions        sessions open now
-//   POST /admin/selftest        run the GPU self-test on fal
-//   POST /admin/bench           run the GPU benchmark on fal
+//   POST /admin/selftest        run the GPU self-test (fal only; on Modal: modal run)
+//   POST /admin/bench           run the GPU benchmark (fal only)
 //
 // Admin requests need Authorization: Bearer <ADMIN_TOKEN>.
 
@@ -71,7 +72,9 @@ async function admin(request: Request, env: Env, path: string): Promise<Response
 	}
 	if (path === "/sessions" && method === "GET") return json(await reg.liveSessions());
 	if ((path === "/selftest" || path === "/bench") && method === "POST") {
-		if (!env.FAL_APP || !env.FAL_KEY) return json({ error: "needs FAL_APP and the FAL_KEY secret" }, 503);
+		if (!env.FAL_APP || !env.FAL_KEY) {
+			return json({ error: `needs FAL_APP and the FAL_KEY secret; on Modal, run: modal run deploy/modal/app.py::${path.slice(1)}` }, 503);
+		}
 		const response = await fetch(`https://fal.run/${env.FAL_APP}${path}`, {
 			method: "POST",
 			headers: { Authorization: `Key ${env.FAL_KEY}`, "Content-Type": "application/json" },

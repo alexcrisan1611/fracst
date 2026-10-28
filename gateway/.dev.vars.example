@@ -2,6 +2,10 @@
 ADMIN_TOKEN=dev-admin-token
 # Relay to a local fracst-server instead of fal.ai:
 UPSTREAM_URL=ws://127.0.0.1:7878
-# Or relay to your fal app:
+# Or relay to your Modal app:
+# UPSTREAM_URL=wss://your-workspace--fracst.modal.run
+# MODAL_KEY=wk-...
+# MODAL_SECRET=ws-...
+# Or to your fal app:
 # FAL_APP=your-fal-user/fracst
 # FAL_KEY=...

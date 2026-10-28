@@ -66,8 +66,9 @@ fn describe(e: tungstenite::Error) -> String {
 
 impl Client {
     /// Connect to `url` (`ws://` or `wss://`). `key` authenticates: sent as
-    /// `Authorization: Key ...` to fal.ai and `Authorization: Bearer ...`
-    /// elsewhere (a fracst server or gateway).
+    /// `Authorization: Key ...` to fal.ai, as `Modal-Key` and `Modal-Secret`
+    /// to Modal (a proxy auth token given as `wk-…:ws-…`), and as
+    /// `Authorization: Bearer ...` elsewhere (a fracst server or gateway).
     pub fn connect(url: &str, key: Option<&str>) -> Result<Client, String> {
         Self::connect_with_status(url, key, &mut |_| {})
     }
@@ -80,8 +81,16 @@ impl Client {
         let host = uri.host().ok_or("the URL has no host")?.to_string();
         if let Some(key) = key.map(str::trim).filter(|k| !k.is_empty()) {
             let fal = host == "fal.run" || host.ends_with(".fal.run");
-            let value = format!("{} {key}", if fal { "Key" } else { "Bearer" });
-            request.headers_mut().insert("Authorization", HeaderValue::from_str(&value).map_err(|e| e.to_string())?);
+            let headers = request.headers_mut();
+            let header = |v: &str| HeaderValue::from_str(v).map_err(|e| e.to_string());
+            if host.ends_with(".modal.run") {
+                let (id, secret) = key.split_once(':').ok_or("for Modal, give the proxy auth token as wk-…:ws-…")?;
+                headers.insert("Modal-Key", header(id)?);
+                headers.insert("Modal-Secret", header(secret)?);
+            } else {
+                let value = format!("{} {key}", if fal { "Key" } else { "Bearer" });
+                headers.insert("Authorization", header(&value)?);
+            }
         }
         let port = uri.port_u16().unwrap_or(if uri.scheme_str() == Some("wss") { 443 } else { 80 });
         let addr = (host.as_str(), port)

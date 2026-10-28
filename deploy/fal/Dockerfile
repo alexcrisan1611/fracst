@@ -1,5 +1,6 @@
-# fracst-server for fal.ai, or any machine with an NVIDIA GPU. From the
-# repository root:
+# fracst-server for fal.ai, Modal (deploy/modal/app.py, which builds it
+# without fal: --build-arg PLATFORM_PIP=), or any machine with an NVIDIA
+# GPU. From the repository root:
 #   docker build -f deploy/fal/Dockerfile -t fracst-server .
 #   docker run --gpus all -p 7878:7878 fracst-server fracst-server --listen 0.0.0.0:7878 --token SECRET
 
@@ -24,5 +25,6 @@ ENV NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility \
     LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/nvidia/cuda_nvrtc/lib
 COPY --from=build /src/target/release/fracst-server /usr/local/bin/fracst-server
-# Last, so fal's own dependency versions win.
-RUN pip install --no-cache-dir fal
+# Last, so the platform's own dependency versions win.
+ARG PLATFORM_PIP=fal
+RUN if [ -n "$PLATFORM_PIP" ]; then pip install --no-cache-dir $PLATFORM_PIP; fi

@@ -187,9 +187,9 @@ fracst-cli deep.kfr --zoom-out 500 --zoom-out-factor 2 -o frames/zoom.png
 WebSocket. On a machine with an NVIDIA GPU, it iterates the pixels with a
 CUDA kernel that produces bit-identical frames. The app keeps colouring and
 the interface local, so only views and finished frames cross the network.
-`deploy/fal/` deploys it on fal.ai in one command, and `gateway/` (a
-Cloudflare Worker) shares it with others through per-person fracst keys
-with usage limits, keeping your fal key secret. See
+`deploy/modal/` and `deploy/fal/` deploy it on Modal or fal.ai in one
+command, and `gateway/` (a Cloudflare Worker) shares it with others through
+per-person fracst keys with usage limits, keeping your GPU token secret. See
 [docs/remote.md](docs/remote.md) for setup, costs and how it is tested.
 
 ```
@@ -236,8 +236,9 @@ crates/fracst-cuda   CUDA pixel engine: kernel/fracst.cuh (the pixel loop, also
                      compiled for the host in tests), NVRTC compilation, check.rs
 crates/fracst-remote remote protocol, lossless frame compression, client
 crates/fracst-server WebSocket render server (CUDA when available)
-deploy/fal           container image and fal.ai app for fracst-server
-gateway              Cloudflare Worker: fracst keys, usage limits, relay to fal
+deploy/fal           container image for fracst-server, and the fal.ai app
+deploy/modal         the Modal app
+gateway              Cloudflare Worker: fracst keys, usage limits, relay to the GPU
 ```
 
 ## Roadmap

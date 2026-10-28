@@ -1,14 +1,17 @@
 # fracst-gateway
 
-A Cloudflare Worker that lets people render on your fal.ai GPU with their
-own fracst keys (`fst_…`), which you can limit and revoke. Your fal key stays
-here, as a secret. It relays the fracst protocol unchanged.
+A Cloudflare Worker that lets people render on your GPU server (on Modal or
+fal.ai) with their own fracst keys (`fst_…`), which you can limit and revoke.
+Your Modal or fal token stays here, as a secret. It relays the fracst
+protocol unchanged.
 
 ```
 npm install
 npx wrangler login
-# in wrangler.jsonc: "FAL_APP": "<your-fal-user>/fracst"
-npx wrangler secret put FAL_KEY
+# in wrangler.jsonc: "UPSTREAM_URL": "wss://<workspace>--fracst.modal.run"
+npx wrangler secret put MODAL_KEY        # a Modal proxy auth token
+npx wrangler secret put MODAL_SECRET
+# (or for fal: "FAL_APP": "<your-fal-user>/fracst" and FAL_KEY)
 npx wrangler secret put ADMIN_TOKEN
 npx wrangler deploy
 

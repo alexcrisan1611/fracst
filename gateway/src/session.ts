@@ -1,5 +1,5 @@
 // A session: one Durable Object per app connection. It opens the WebSocket
-// to the GPU server (the fal app, with the gateway's fal key) and relays
+// to the GPU server (on Modal or fal, with the gateway's token) and relays
 // messages both ways unchanged, so the app speaks the fracst protocol end
 // to end. While the GPU starts it sends the app status messages, and it
 // checks in with the registry every minute to count usage.
@@ -109,7 +109,7 @@ export class Session extends DurableObject<Env> {
 		tell({ type: "status", message: "Connecting to the GPU server…" });
 		ticker = setInterval(() => {
 			const s = Math.round((Date.now() - started) / 1000);
-			tell({ type: "status", message: `Waiting for a GPU on fal.ai (an idle one takes a minute or two to start)… ${s} s` });
+			tell({ type: "status", message: `Waiting for a GPU (an idle one takes a minute or two to start)… ${s} s` });
 		}, STATUS_EVERY_MS);
 
 		try {
@@ -138,9 +138,14 @@ export class Session extends DurableObject<Env> {
 	/** Open the WebSocket to the GPU server, retrying while it starts. */
 	private async openUpstream(cancelled: () => boolean): Promise<WebSocket> {
 		const url = upstreamUrl(this.env);
-		if (!url) throw new Refused("the gateway has no GPU server configured (FAL_APP)");
+		if (!url) throw new Refused("the gateway has no GPU server configured (UPSTREAM_URL or FAL_APP)");
 		const headers: Record<string, string> = { Upgrade: "websocket" };
-		if (this.env.FAL_KEY) headers.Authorization = `Key ${this.env.FAL_KEY}`;
+		if (this.env.MODAL_KEY && this.env.MODAL_SECRET) {
+			headers["Modal-Key"] = this.env.MODAL_KEY;
+			headers["Modal-Secret"] = this.env.MODAL_SECRET;
+		} else if (this.env.FAL_KEY) {
+			headers.Authorization = `Key ${this.env.FAL_KEY}`;
+		}
 		const deadline = Date.now() + CONNECT_TIMEOUT_MS;
 		let last = "";
 		while (Date.now() < deadline && !cancelled()) {
@@ -154,9 +159,9 @@ export class Session extends DurableObject<Env> {
 				}
 				const body = (await response.text()).slice(0, 200).trim();
 				if (response.status === 401 || response.status === 403) {
-					throw new Refused(`fal.ai refused the gateway's key (HTTP ${response.status})`);
+					throw new Refused(`the GPU server refused the gateway's token (HTTP ${response.status})`);
 				}
-				if (response.status === 404) throw new Refused(`no GPU server at ${url} (HTTP 404): check FAL_APP`);
+				if (response.status === 404) throw new Refused(`no GPU server at ${url} (HTTP 404): check UPSTREAM_URL or FAL_APP`);
 				last = `HTTP ${response.status}${body ? `: ${body}` : ""}`;
 			} catch (e) {
 				if (e instanceof Refused) throw e;
