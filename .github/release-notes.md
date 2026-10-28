@@ -11,4 +11,4 @@ On Linux, fracst needs Vulkan or OpenGL drivers (Mesa is fine) and X11 or Waylan
 
 Open a location by passing a `.kfr` file or a PNG with an embedded location: `fracst location.kfr`. Run `fracst-cli --help` for batch rendering.
 
-To render on a cloud GPU, open **Remote GPU** in the app and connect to a fracst gateway or server with your key; see [docs/remote.md](https://github.com/alexcrisan1611/fracst/blob/master/docs/remote.md).
+To render on a cloud GPU, open **Remote GPU** in the app and connect to a fracst gateway or server with your key; see [docs/remote.md](https://github.com/alexcrisan1611/fracst/blob/main/docs/remote.md).
