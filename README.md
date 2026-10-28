@@ -157,6 +157,7 @@ The side panel covers:
 - **Rendering**: resolution scale, BLA, interior detection, reference snapping,
   bailout and reference reuse.
 - **Export**: any size with supersampling.
+- **Remote GPU**: render on a `fracst-server`, such as a cloud GPU (see below).
 - **Statistics**: per-stage timings, BLA skip factor and iteration range.
 
 While a frame renders, the previous one is shown stretched to the new view.
@@ -179,6 +180,22 @@ fracst-cli deep.kfr --zoom-out 500 --zoom-out-factor 2 -o frames/zoom.png
 ```
 
 `fracst-cli --help` lists every option.
+
+### Remote GPU (`fracst-server`)
+
+`fracst-server` renders frames for the app and `fracst-cli --remote` over a
+WebSocket. On a machine with an NVIDIA GPU, it iterates the pixels with a
+CUDA kernel that produces bit-identical frames. The app keeps colouring and
+the interface local, so only views and finished frames cross the network.
+`deploy/fal/` deploys it on fal.ai in one command, and `gateway/` (a
+Cloudflare Worker) shares it with others through per-person fracst keys
+with usage limits, keeping your fal key secret. See
+[docs/remote.md](docs/remote.md) for setup, costs and how it is tested.
+
+```
+fracst-server --listen 0.0.0.0:7878 --token SECRET     # on the GPU machine
+fracst-cli --remote ws://gpu-box:7878 --key SECRET deep.kfr -W 3840 -H 2160 -o deep.png
+```
 
 ### Benchmarks
 
@@ -215,13 +232,22 @@ crates/fracst-core   engine: fixed.rs (bignum), floatexp.rs + num.rs (extended r
                      colour.rs, kfr.rs, image.rs
 crates/fracst-cli    command-line renderer
 crates/fracst        egui explorer (render thread in worker.rs)
+crates/fracst-cuda   CUDA pixel engine: kernel/fracst.cuh (the pixel loop, also
+                     compiled for the host in tests), NVRTC compilation, check.rs
+crates/fracst-remote remote protocol, lossless frame compression, client
+crates/fracst-server WebSocket render server (CUDA when available)
+deploy/fal           container image and fal.ai app for fracst-server
+gateway              Cloudflare Worker: fracst keys, usage limits, relay to fal
 ```
 
 ## Roadmap
 
 - A rescaled-`f64` deep phase. Extended-range steps are still about 6× slower
   than `f64` steps, and they dominate inside deep minibrots.
-- GPU rendering (wgpu compute).
+- Benchmarks of the CUDA engine on H100 and B200, and kernel tuning
+  (occupancy, register use) against them.
+- A lossy, server-coloured streaming mode for real-time navigation over slow links.
+- The CUDA engine in the explorer itself, for local NVIDIA GPUs.
 - More formulas: Burning Ship, higher powers, hybrids.
 - Distance-estimation colouring and raw (EXR) output.
 
