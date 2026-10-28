@@ -9,7 +9,7 @@ use fracst_core::{Colouring, FloatExp, Frame, Progress, Renderer, Settings, View
 use fracst_remote::Client;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
 pub enum Task {
@@ -37,6 +37,9 @@ pub enum RemoteStatus {
     Connecting(String),
     /// Rendering remotely on this engine.
     Connected(String),
+    /// Disconnected after a while without renders, so the GPU can shut
+    /// down; the next render reconnects.
+    Paused,
     Failed(String),
 }
 
@@ -213,9 +216,15 @@ fn run(jobs: Receiver<Request>, remote_rx: Receiver<RemoteMsg>, done: Sender<Mes
     loop {
         let req = match pending.take() {
             Some(r) => r,
-            None => match jobs.recv() {
+            // Wake up now and then to act on disconnects, so a remote GPU
+            // isn't kept up by a connection nobody uses.
+            None => match jobs.recv_timeout(Duration::from_millis(250)) {
                 Ok(r) => r,
-                Err(_) => return,
+                Err(RecvTimeoutError::Timeout) => {
+                    backend.poll_remote();
+                    continue;
+                }
+                Err(RecvTimeoutError::Disconnected) => return,
             },
         };
         // Skip straight to the newest request.

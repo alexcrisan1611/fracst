@@ -1,12 +1,17 @@
 use crate::remote_config;
 use crate::worker::{Outcome, RemoteConfig, RemoteStatus, Task, Worker};
 use eframe::egui::{
-    self, CollapsingHeader, Color32, ComboBox, DragValue, Key, PointerButton, Pos2, Rect, Sense, Slider, TextEdit,
-    TextureHandle, TextureOptions, Vec2, ViewportCommand,
+    self, CollapsingHeader, Color32, ComboBox, DragValue, Key, PointerButton, Pos2, Rect, Sense, Slider, StrokeKind,
+    TextEdit, TextureHandle, TextureOptions, Vec2, ViewportCommand,
 };
 use fracst_core::{Colouring, FloatExp, Frame, Palette, Progress, Settings, Slopes, Transfer, View, kfr};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// Disconnect from the remote GPU after this long without a render, so it
+/// stops billing; the next render reconnects (in about a second while the
+/// GPU is still up).
+const REMOTE_IDLE: Duration = Duration::from_secs(60);
 
 struct Shown {
     view: View,
@@ -41,6 +46,12 @@ pub struct App {
     blocking: Option<(u64, &'static str)>,
     last_render_secs: f64,
     resolution_scale: f32,
+    /// Render only a centred region of this many pixels, not the whole canvas.
+    region: Option<[u32; 2]>,
+    /// The last region size chosen, kept while the region is off.
+    region_size: [u32; 2],
+    /// The region changed: rescale the zoom so pixels keep their size.
+    region_changed: bool,
     zoom_factor: f64,
     minibrot_fill: f64,
     palette_seed: u64,
@@ -56,6 +67,8 @@ pub struct App {
     remote_status: RemoteStatus,
     /// Of the latest connect/disconnect, to ignore stale reports.
     remote_generation: u64,
+    /// When the remote GPU last had work.
+    remote_used: Instant,
     /// Testing hook: save a screenshot of the window here once rendering settles, then exit.
     screenshot_to: Option<std::path::PathBuf>,
     screenshot_frames: u32,
@@ -88,6 +101,9 @@ impl App {
             blocking: None,
             last_render_secs: 0.0,
             resolution_scale: 1.0,
+            region: None,
+            region_size: [256, 256],
+            region_changed: false,
             zoom_factor: 4.0,
             minibrot_fill: 0.25,
             palette_seed: 1,
@@ -102,6 +118,7 @@ impl App {
             remote_key,
             remote_status: RemoteStatus::Off,
             remote_generation: 0,
+            remote_used: Instant::now(),
             screenshot_to: std::env::var_os("FRACST_SCREENSHOT").map(Into::into),
             screenshot_frames: 0,
         };
@@ -116,6 +133,25 @@ impl App {
         let config = RemoteConfig { url: self.remote_url.trim().to_string(), key: self.remote_key.trim().to_string() };
         self.remote_generation = self.worker.connect_remote(config);
         self.remote_status = RemoteStatus::Connecting(String::new());
+        self.remote_used = Instant::now();
+    }
+
+    /// Pause the remote connection once it has been idle for a while, and
+    /// otherwise make sure the UI wakes up to check again.
+    fn pause_idle_remote(&mut self, ctx: &egui::Context) {
+        if !matches!(self.remote_status, RemoteStatus::Connected(_)) {
+            return;
+        }
+        if self.worker.current().is_some() {
+            self.remote_used = Instant::now();
+        }
+        let idle = self.remote_used.elapsed();
+        if idle >= REMOTE_IDLE {
+            self.remote_generation = self.worker.disconnect_remote();
+            self.remote_status = RemoteStatus::Paused;
+        } else {
+            ctx.request_repaint_after(REMOTE_IDLE - idle);
+        }
     }
 
     fn poll_worker(&mut self, ctx: &egui::Context) {
@@ -199,6 +235,11 @@ impl App {
         self.view.ensure_precision(self.settings.height);
         let want = (self.view.clone(), self.settings.clone());
         if self.requested.as_ref() != Some(&want) {
+            if matches!(self.remote_status, RemoteStatus::Paused) {
+                // Renders here until the GPU answers again.
+                self.connect_remote();
+            }
+            self.remote_used = Instant::now();
             let preview = self.last_render_secs > 0.15;
             self.render_id =
                 self.worker.submit(Task::Render { view: want.0.clone(), settings: want.1.clone(), preview });
@@ -216,11 +257,26 @@ impl App {
     // ---- canvas -------------------------------------------------------------
 
     fn canvas(&mut self, ui: &mut egui::Ui) {
-        let rect = ui.max_rect();
+        let full = ui.max_rect();
         let px_per_point = ui.ctx().pixels_per_point() * self.resolution_scale;
+        let rect = match self.region {
+            Some([w, h]) => {
+                Rect::from_center_size(full.center(), Vec2::new(w as f32, h as f32) / px_per_point).intersect(full)
+            }
+            None => full,
+        };
+        let old_height = self.settings.height;
         self.settings.width = ((rect.width() * px_per_point).round() as u32).max(16);
         self.settings.height = ((rect.height() * px_per_point).round() as u32).max(16);
         let (w, h) = (self.settings.width, self.settings.height);
+        if std::mem::take(&mut self.region_changed) && old_height != h {
+            // The zoom is relative to the image height: keep the pixels' size,
+            // so the region shows the middle of what was on screen.
+            self.view.zoom = self.view.zoom * FloatExp::from(h as f64 / old_height as f64);
+        }
+        if self.region.is_some() {
+            ui.painter().rect_stroke(rect, 0.0, (1.0, Color32::from_gray(90)), StrokeKind::Outside);
+        }
         let response = ui.allocate_rect(rect, Sense::click_and_drag());
 
         if let (Some(tex), Some(shown)) = (&self.texture, &self.shown) {
@@ -446,6 +502,24 @@ impl App {
                 }
             },
         );
+        let mut region = self.region.is_some();
+        let mut changed = ui
+            .checkbox(&mut region, "Render only a region")
+            .on_hover_text("Render a small centred part of the view, for slow deep locations; pixels keep their size")
+            .changed();
+        ui.add_enabled_ui(region, |ui| {
+            ui.horizontal(|ui| {
+                let [w, h] = &mut self.region_size;
+                changed |= ui.add(DragValue::new(w).range(16..=16384)).changed();
+                ui.label("×");
+                changed |= ui.add(DragValue::new(h).range(16..=16384)).changed();
+                ui.label("pixels");
+            });
+        });
+        if changed {
+            self.region = region.then_some(self.region_size);
+            self.region_changed = true;
+        }
         ui.checkbox(&mut self.settings.bla, "Bilinear approximation (BLA)");
         let mut bits = (-self.settings.bla_epsilon.log2()).round() as u32;
         if ui
@@ -489,7 +563,10 @@ impl App {
             );
             ui.end_row();
         });
-        let active = matches!(self.remote_status, RemoteStatus::Connecting(_) | RemoteStatus::Connected(_));
+        let active = matches!(
+            self.remote_status,
+            RemoteStatus::Connecting(_) | RemoteStatus::Connected(_) | RemoteStatus::Paused
+        );
         ui.horizontal(|ui| {
             let label = if active { "Reconnect" } else { "Connect" };
             if ui.add_enabled(!self.remote_url.trim().is_empty(), egui::Button::new(label)).clicked() {
@@ -517,6 +594,9 @@ impl App {
             }
             RemoteStatus::Connected(engine) => {
                 ui.label(format!("Rendering on {engine}"));
+            }
+            RemoteStatus::Paused => {
+                ui.label("Paused while idle, so the GPU can shut down. The next render reconnects.");
             }
             RemoteStatus::Failed(e) => {
                 ui.colored_label(Color32::from_rgb(230, 110, 90), format!("Remote: {e}"));
@@ -791,6 +871,7 @@ impl eframe::App for App {
             self.help_window(&ctx);
         }
         self.request_render();
+        self.pause_idle_remote(&ctx);
         if self.recolour {
             ctx.request_repaint();
         }

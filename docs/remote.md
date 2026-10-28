@@ -24,7 +24,7 @@ fracst app / fracst-cli  ──WebSocket──>  fracst-server  ──>  CUDA en
   is useful for a big machine shared by several people.
 
 The pixel loop needs fast 64-bit floating point. Data-centre GPUs with full
-FP64 rates (H100, H200, B200) are the ones that pay. Blackwell Ultra parts
+FP64 rates (A100, H100, H200, B200) are the ones that pay. Blackwell Ultra parts
 (B300, GB300) and gaming cards run FP64 at a small fraction of their 32-bit
 speed. The kernels compile for them, but don't expect miracles.
 
@@ -55,9 +55,13 @@ modal run deploy/modal/app.py::selftest     # CPU and GPU must match
 modal run deploy/modal/app.py::bench
 ```
 
-The app asks for an H100 and falls back to an H200 or B200; set
-`FRACST_MODAL_GPU` to choose. At most one GPU container runs, serving up to
-eight connections, and it stops five minutes after the last one closes.
+The app asks for an A100 and falls back to an 80 GB A100 or an H100; set
+`FRACST_MODAL_GPU` to choose. An A100 costs half as much as an H100 and is
+about a third as fast at FP64. Modal bills the time a GPU is up, not the
+work it does, and most of that time it waits for you, so the A100 costs
+least. At most one GPU container runs, serving up to eight connections. It
+stops a minute after the last one closes, and `fracst-server` drops
+connections that send nothing for two minutes.
 Modal limits WebSocket messages to 2 MiB; frames travel in compressed
 blocks of at most 1 MiB of pixels, so they fit.
 
@@ -102,6 +106,11 @@ A runner that was idle takes a minute or two to start. From then on, the
 panel shows which GPU renders, and **Statistics** shows each frame's round
 trip next to the server's own time. If the connection drops, the app goes
 back to rendering locally and says so.
+
+After a minute without renders, the app disconnects so the GPU can shut
+down, and the panel says it is paused. The next render reconnects, in about
+a second while the GPU is still up; until then it renders locally.
+Recolouring never needs the GPU.
 
 The app can also connect on start-up:
 `FRACST_REMOTE_URL=wss://fal.run/... FAL_KEY=... fracst`.
@@ -307,8 +316,8 @@ previews arrive 16 times faster. A lossy mode coloured on the server
   and `cargo test -p fracst-cuda --features host-kernel` checks that its
   frames match the CPU's bit for bit on the same views as `/selftest`. It
   runs without flushing subnormals, as on the GPU.
-- **`tests/nvrtc.rs` compiles the CUDA kernels with NVRTC** for sm_90,
-  sm_100, sm_103 and sm_120 when `FRACST_NVRTC_TEST=1` is set and NVRTC is
+- **`tests/nvrtc.rs` compiles the CUDA kernels with NVRTC** for sm_80,
+  sm_90, sm_100, sm_103 and sm_120 when `FRACST_NVRTC_TEST=1` is set and NVRTC is
   on the library path. NVRTC needs no GPU.
 - **`fracst-server`'s end-to-end tests** run a real server and client over
   a local WebSocket. They check exact frames (with the host build of the
