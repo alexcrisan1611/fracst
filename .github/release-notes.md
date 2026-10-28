@@ -1,4 +1,4 @@
-Prebuilt 64-bit packages of **fracst**, a fast deep-zoom Mandelbrot explorer. Each package contains the explorer (`fracst`), the command-line renderer (`fracst-cli`), the README and the licenses.
+Prebuilt 64-bit packages of **fracst**, a fast deep-zoom Mandelbrot explorer. Each package contains the explorer (`fracst`), the command-line renderer (`fracst-cli`), the README and the licenses. The Windows and Linux packages also contain `fracst-server`, which renders for the app on another machine, on an NVIDIA GPU with CUDA when it has one.
 
 | Platform | Download | Notes |
 |---|---|---|
@@ -7,3 +7,5 @@ Prebuilt 64-bit packages of **fracst**, a fast deep-zoom Mandelbrot explorer. Ea
 | Linux (x86_64, glibc 2.35+, e.g. Ubuntu 22.04+) | `fracst-*-linux-x86_64.tar.gz` | Extract and run `./fracst`. Needs Vulkan or OpenGL drivers (Mesa is fine) and X11 or Wayland. File dialogs use the XDG desktop portal. |
 
 Open a location by passing a `.kfr` file or a PNG with an embedded location: `fracst location.kfr`. Run `fracst-cli --help` for batch rendering.
+
+To render on a cloud GPU, open **Remote GPU** in the app and connect to a fracst gateway or server with your key; see [docs/remote.md](https://github.com/alexcrisan1611/fracst/blob/master/docs/remote.md).
