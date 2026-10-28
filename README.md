@@ -25,6 +25,11 @@ command-line renderer (`fracst-cli`). The builds are not code-signed. On Windows
 choose **More info → Run anyway** if SmartScreen asks. On macOS right-click the
 app and choose **Open** the first time.
 
+At startup the app asks GitHub for the latest release's version and, if it is
+newer, shows a link to it in the menu bar. Nothing else is sent. Turn this off
+under **Help → Check for updates at startup** (or set `FRACST_NO_UPDATE_CHECK=1`).
+To upgrade, run the new installer over the old one; settings are kept.
+
 To build from source instead, install [Rust](https://rustup.rs) and run
 `cargo run --release -p fracst`.
 

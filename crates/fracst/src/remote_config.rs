@@ -10,7 +10,7 @@ pub struct Saved {
     pub key: String,
 }
 
-fn dir() -> Option<PathBuf> {
+pub fn dir() -> Option<PathBuf> {
     let var = |k| std::env::var_os(k).map(PathBuf::from);
     #[cfg(windows)]
     let base = var("APPDATA");

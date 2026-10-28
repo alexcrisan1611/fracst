@@ -1,4 +1,5 @@
 use crate::remote_config;
+use crate::update::{self, Release};
 use crate::worker::{Outcome, RemoteConfig, RemoteStatus, Task, Worker};
 use eframe::egui::{
     self, CollapsingHeader, Color32, ComboBox, DragValue, Key, PointerButton, Pos2, Rect, Sense, Slider, StrokeKind,
@@ -6,6 +7,7 @@ use eframe::egui::{
 };
 use fracst_core::{Colouring, FloatExp, Frame, Palette, Progress, Settings, Slopes, Transfer, View, kfr};
 use std::path::Path;
+use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 /// Disconnect from the remote GPU after this long without a render, so it
@@ -69,6 +71,12 @@ pub struct App {
     remote_generation: u64,
     /// When the remote GPU last had work.
     remote_used: Instant,
+    /// Whether to look for a newer release at startup.
+    update_check: bool,
+    /// The answer to the startup check, while it is pending.
+    update_rx: Option<Receiver<Release>>,
+    /// A newer release, until dismissed.
+    update: Option<Release>,
     /// Testing hook: save a screenshot of the window here once rendering settles, then exit.
     screenshot_to: Option<std::path::PathBuf>,
     screenshot_frames: u32,
@@ -88,6 +96,9 @@ impl App {
             .unwrap_or_default();
         let remote_key =
             env("FRACST_REMOTE_KEY").or_else(|| env("FAL_KEY")).or_else(|| nonempty(saved.key)).unwrap_or_default();
+        let screenshot_to: Option<std::path::PathBuf> = std::env::var_os("FRACST_SCREENSHOT").map(Into::into);
+        let update_check = update::enabled();
+        let update_rx = (update_check && screenshot_to.is_none()).then(|| update::spawn_check(cc.egui_ctx.clone()));
         let mut app = App {
             worker: Worker::spawn(cc.egui_ctx.clone()),
             view: View::default(),
@@ -119,7 +130,10 @@ impl App {
             remote_status: RemoteStatus::Off,
             remote_generation: 0,
             remote_used: Instant::now(),
-            screenshot_to: std::env::var_os("FRACST_SCREENSHOT").map(Into::into),
+            update_check,
+            update_rx,
+            update: None,
+            screenshot_to,
             screenshot_frames: 0,
         };
         // Connecting may start a paid GPU, so only when asked to.
@@ -729,7 +743,26 @@ impl App {
                 if ui.button("Controls").clicked() {
                     self.show_help = true;
                 }
+                ui.separator();
+                if ui.checkbox(&mut self.update_check, "Check for updates at startup").changed() {
+                    update::set_enabled(self.update_check);
+                }
             });
+            if let Some(release) = self.update_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+                self.update = Some(release);
+            }
+            if let Some(release) = &self.update {
+                let mut dismiss = false;
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    dismiss = ui.small_button("×").on_hover_text("Dismiss").clicked();
+                    ui.hyperlink_to(format!("fracst {} is available", release.version), &release.url)
+                        .on_hover_text("Open the release page to download it");
+                });
+                if dismiss {
+                    self.update = None;
+                    self.update_rx = None;
+                }
+            }
         });
     }
 

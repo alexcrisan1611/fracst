@@ -4,6 +4,7 @@
 
 mod app;
 mod remote_config;
+mod update;
 mod worker;
 
 fn main() -> eframe::Result {
