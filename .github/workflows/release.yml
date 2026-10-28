@@ -62,6 +62,8 @@ jobs:
           else
             echo "VERSION=dev-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           fi
+          # Installers need a plain number: the crate version.
+          echo "PKG_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" >> "$GITHUB_ENV"
 
       - name: Build and package (Linux)
         if: runner.os == 'Linux'
@@ -85,7 +87,7 @@ jobs:
           mkdir -p "$deb/DEBIAN"
           cat > "$deb/DEBIAN/control" <<CONTROL
           Package: fracst
-          Version: ${VERSION#v}
+          Version: $PKG_VERSION
           Architecture: amd64
           Maintainer: Alex Crișan <alexcrisan1611@users.noreply.github.com>
           Depends: libc6 (>= 2.35), libgcc-s1
@@ -111,10 +113,8 @@ jobs:
           cp target/release/fracst.exe target/release/fracst-cli.exe target/release/fracst-server.exe README.md LICENSE-MIT LICENSE-APACHE "$dist/"
           7z a "$dist.zip" "$dist"
           # ...and an installer (Inno Setup comes with the runner image).
-          version="${VERSION#v}"
-          [[ "$version" =~ ^[0-9]+(\.[0-9]+)*$ ]] || version=0.0.0
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" -Q \
-            "-DAppVersion=$version" "-DSourceDir=$(cygpath -w "$PWD/target/release")" \
+            "-DAppVersion=$PKG_VERSION" "-DSourceDir=$(cygpath -w "$PWD/target/release")" \
             "-DOutputBase=fracst-$VERSION-windows-x86_64-setup" "-O$(cygpath -w "$PWD")" \
             packaging/windows/fracst.iss
 
@@ -131,7 +131,7 @@ jobs:
           lipo -create -output "$contents/MacOS/fracst" target/{aarch64,x86_64}-apple-darwin/release/fracst
           lipo -create -output "$dist/fracst-cli" target/{aarch64,x86_64}-apple-darwin/release/fracst-cli
           cp assets/icon.icns "$contents/Resources/fracst.icns"
-          sed "s/@VERSION@/${VERSION#v}/g" .github/macos/Info.plist > "$contents/Info.plist"
+          sed "s/@VERSION@/$PKG_VERSION/g" .github/macos/Info.plist > "$contents/Info.plist"
           cp README.md LICENSE-MIT LICENSE-APACHE "$dist/"
           # Ad-hoc signatures: not notarised, but required to run on Apple Silicon.
           codesign --force --deep --sign - "$dist/fracst.app"
