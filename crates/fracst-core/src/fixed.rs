@@ -30,6 +30,16 @@ impl Fixed {
         self.limbs.len()
     }
 
+    /// The limbs, least significant first (the last one is the signed integer part).
+    pub fn as_limbs(&self) -> &[u64] {
+        &self.limbs
+    }
+
+    /// The number with these limbs (see [`Fixed::as_limbs`]); `None` with fewer than two.
+    pub fn from_limbs(limbs: Vec<u64>) -> Option<Self> {
+        (limbs.len() >= 2).then_some(Fixed { limbs })
+    }
+
     /// Fractional precision in bits.
     pub fn precision_bits(&self) -> u64 {
         64 * (self.limbs.len() as u64 - 1)

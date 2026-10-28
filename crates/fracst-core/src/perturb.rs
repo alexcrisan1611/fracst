@@ -44,7 +44,7 @@ pub const INTERIOR_RADIUS2: f64 = 1.0 / (1024.0 * 1024.0);
 ///   With high limits pixels first run to `INTERIOR_START` without it; only
 ///   those still going restart from `z_1` with it (cheap with BLA), so most
 ///   exterior pixels never pay for the extra derivative.
-const INTERIOR_START: u64 = 4096;
+pub const INTERIOR_START: u64 = 4096;
 
 /// Rescaling of `dz_n/dz_1` in `f64`, which can exceed the range of doubles.
 const DW_BIG: f64 = f64::from_bits((1023 + 600) << 52);

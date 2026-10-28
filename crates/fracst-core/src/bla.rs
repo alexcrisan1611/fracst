@@ -178,6 +178,11 @@ impl<C: Cplx> BlaTable<C> {
         self.levels.len()
     }
 
+    /// The steps of level `k`: entry `j` starts at `m = 1 + j * 2^(k+1)`.
+    pub fn level(&self, k: usize) -> &[Bla<C>] {
+        &self.levels[k]
+    }
+
     pub fn memory_bytes(&self) -> usize {
         self.levels.iter().map(|l| l.capacity() * size_of::<Bla<C>>()).sum()
     }

@@ -328,6 +328,12 @@ impl CExp {
         if (CEXP_LO..=CEXP_HI).contains(&biased) { CExp { re, im, e } } else { Self::renormalise(re, im, e) }
     }
 
+    /// The mantissas and the shared exponent: the value is `(re + i im) * 2^e`.
+    #[inline]
+    pub fn parts(self) -> (f64, f64, i32) {
+        (self.re, self.im, self.e)
+    }
+
     #[cold]
     #[inline(never)]
     fn renormalise(re: f64, im: f64, e: i32) -> Self {

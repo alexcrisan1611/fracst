@@ -182,13 +182,55 @@ impl Frame {
     }
 }
 
-/// BLA tables for the `f64` phase and, for deep zooms, the extended-range phase.
-type Tables = (Arc<BlaTable<Complex<f64>>>, Option<Arc<BlaTable<CExp>>>);
+/// Iterates whole passes of pixels on another device, such as a GPU, in
+/// place of the CPU pixel loop. It must produce the results the CPU loop
+/// would.
+pub trait PixelEngine: Send + Sync {
+    /// The device, for display, e.g. "CUDA: NVIDIA H100 80GB HBM3 (sm_90)".
+    fn name(&self) -> String;
+
+    /// Iterate every pixel of `pass`: one result per entry of `pass.dcs`, in
+    /// order. `None` if cancelled through `pass.progress` or if the engine
+    /// failed; the CPU then renders the pass instead.
+    fn iterate(&self, pass: &EnginePass<'_>) -> Option<Vec<PixelResult>>;
+}
+
+/// Everything a [`PixelEngine`] needs for one pass over some pixels.
+pub struct EnginePass<'a> {
+    pub reference: &'a Reference,
+    /// Equal for passes that share the same reference orbit and BLA tables,
+    /// so engines can keep them on the device between passes.
+    pub tables_id: u64,
+    /// The `f64` phase. In deep passes, the phase pixels drop to once
+    /// `|dz|` is large enough. `dc` is unused: see `dcs`.
+    pub shallow: Phase<'a, Complex<f64>>,
+    /// The extended-range phase of deep passes. `dc` is unused: see `deep_dcs`.
+    pub deep: Option<Phase<'a, CExp>>,
+    /// Each pixel's offset from the reference (in deep passes rounded to
+    /// `f64` with tiny values flushed to zero).
+    pub dcs: &'a [Complex<f64>],
+    /// Deep passes only: each pixel's offset in extended range.
+    pub deep_dcs: &'a [CExp],
+    pub maxiter: u64,
+    pub extras: Extras,
+    pub progress: &'a Progress,
+}
+
+/// BLA tables for the `f64` phase and, for deep zooms, the extended-range
+/// phase, with the id that identifies them together with their reference.
+type Tables = (Arc<BlaTable<Complex<f64>>>, Option<Arc<BlaTable<CExp>>>, u64);
 
 struct BlaCache {
     key: (usize, usize, u64, u64),
     f64: Arc<BlaTable<Complex<f64>>>,
     deep: Option<Arc<BlaTable<CExp>>>,
+    id: u64,
+}
+
+/// Ids for [`EnginePass::tables_id`], unique across renderers.
+fn next_tables_id() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 /// Renders frames, caching the reference orbit and BLA tables between calls.
@@ -196,6 +238,7 @@ pub struct Renderer {
     reference: Option<Arc<Reference>>,
     bla: Option<BlaCache>,
     pool: Arc<rayon::ThreadPool>,
+    engine: Option<Arc<dyn PixelEngine>>,
 }
 
 impl Default for Renderer {
@@ -249,27 +292,42 @@ type Out = (u32, f32, f32);
 
 impl Pass<'_> {
     fn pixel(&self, x: u32, y: u32) -> PixelResult {
-        let (px, py) = self.view.pixel_offset(x as f64 + 0.5, y as f64 + 0.5, self.width, self.height);
         if self.deep {
-            let dc = self.offset + Complex::new(self.spacing * FloatExp::from(px), self.spacing * FloatExp::from(py));
-            let deep_phase = Phase {
-                bla: self.bla_deep.expect("deep BLA table"),
-                dc: CExp::from_cfe(dc),
-                spacing: self.spacing,
-                bailout2: FloatExp::from(self.bailout2),
-                switch2: perturb::switch_norm(),
-            };
-            let shallow_phase = Phase {
-                bla: self.bla64,
-                dc: Complex::new(perturb::flush_f64(dc.re), perturb::flush_f64(dc.im)),
-                spacing: perturb::flush_f64(self.spacing),
-                bailout2: self.bailout2,
-                switch2: perturb::switch_norm(),
-            };
+            let dc = self.dc_fe(x, y);
+            let deep_phase = self.deep_phase(CExp::from_cfe(dc));
+            let shallow_phase = self.deep_shallow_phase(flush_c64(dc));
             perturb::iterate_deep(self.reference, &deep_phase, &shallow_phase, self.limit, self.extras)
         } else {
             let phase = self.phase64(self.dc64(x, y));
             perturb::iterate_f64(self.reference, &phase, self.limit, self.extras)
+        }
+    }
+
+    /// A pixel's offset from the reference in extended range (deep passes).
+    fn dc_fe(&self, x: u32, y: u32) -> Complex<FloatExp> {
+        let (px, py) = self.view.pixel_offset(x as f64 + 0.5, y as f64 + 0.5, self.width, self.height);
+        self.offset + Complex::new(self.spacing * FloatExp::from(px), self.spacing * FloatExp::from(py))
+    }
+
+    /// The extended-range phase of a deep pass.
+    fn deep_phase(&self, dc: CExp) -> Phase<'_, CExp> {
+        Phase {
+            bla: self.bla_deep.expect("deep BLA table"),
+            dc,
+            spacing: self.spacing,
+            bailout2: FloatExp::from(self.bailout2),
+            switch2: perturb::switch_norm(),
+        }
+    }
+
+    /// The `f64` phase of a deep pass.
+    fn deep_shallow_phase(&self, dc: Complex<f64>) -> Phase<'_, Complex<f64>> {
+        Phase {
+            bla: self.bla64,
+            dc,
+            spacing: perturb::flush_f64(self.spacing),
+            bailout2: self.bailout2,
+            switch2: perturb::switch_norm(),
         }
     }
 
@@ -313,6 +371,10 @@ impl Pass<'_> {
     }
 }
 
+fn flush_c64(dc: Complex<FloatExp>) -> Complex<f64> {
+    Complex::new(perturb::flush_f64(dc.re), perturb::flush_f64(dc.im))
+}
+
 #[derive(Default)]
 struct Counters {
     iterations: AtomicU64,
@@ -335,11 +397,20 @@ impl Renderer {
             .start_handler(|_| flush_subnormals())
             .build()
             .expect("render thread pool");
-        Renderer { reference: None, bla: None, pool: Arc::new(pool) }
+        Renderer { reference: None, bla: None, pool: Arc::new(pool), engine: None }
     }
 
     pub fn reference(&self) -> Option<&Arc<Reference>> {
         self.reference.as_ref()
+    }
+
+    /// Iterate pixels with `engine` (a GPU, say) instead of the CPU loop.
+    pub fn set_engine(&mut self, engine: Option<Arc<dyn PixelEngine>>) {
+        self.engine = engine;
+    }
+
+    pub fn engine(&self) -> Option<&Arc<dyn PixelEngine>> {
+        self.engine.as_ref()
     }
 
     pub fn clear_cache(&mut self) {
@@ -451,7 +522,7 @@ impl Renderer {
 
             let t = Instant::now();
             progress.set_stage(Progress::BLA, 1);
-            let (bla64, bla_deep) = self.bla_tables(&reference, cmax, deep, s);
+            let (bla64, bla_deep, tables_id) = self.bla_tables(&reference, cmax, deep, s);
             stats.bla += t.elapsed();
             stats.bla_levels = bla64.levels();
             if progress.cancelled() {
@@ -475,9 +546,14 @@ impl Renderer {
                 limit,
                 simd: s.simd.then(perturb::SimdGauge::default),
             };
-            match &todo {
-                None => render_all(&pass, &mut frame, &counters, progress),
-                Some(list) => render_some(&pass, &mut frame, list, &counters, progress),
+            let on_engine = self.engine.as_deref().is_some_and(|engine| {
+                engine_pass(engine, &pass, todo.as_deref(), tables_id, &mut frame, &counters, progress)
+            });
+            if !on_engine {
+                match &todo {
+                    None => render_all(&pass, &mut frame, &counters, progress),
+                    Some(list) => render_some(&pass, &mut frame, list, &counters, progress),
+                }
             }
             stats.pixels += t.elapsed();
             if progress.cancelled() {
@@ -561,13 +637,13 @@ impl Renderer {
 
     fn bla_tables(&mut self, reference: &Arc<Reference>, cmax: FloatExp, deep: bool, s: &Settings) -> Tables {
         if !s.bla {
-            return (Arc::new(BlaTable::empty()), deep.then(|| Arc::new(BlaTable::empty())));
+            return (Arc::new(BlaTable::empty()), deep.then(|| Arc::new(BlaTable::empty())), next_tables_id());
         }
         let len = reference.last_index();
         let key =
             (Arc::as_ptr(reference) as usize, len, f64::to_bits(cmax.log2()), s.bla_epsilon.to_bits() ^ deep as u64);
         if let Some(c) = self.bla.as_ref().filter(|c| c.key == key) {
-            return (c.f64.clone(), c.deep.clone());
+            return (c.f64.clone(), c.deep.clone(), c.id);
         }
         let (t64, tdeep) = if deep {
             let fe = BlaTable::<Complex<FloatExp>>::build(len, |m| reference.z_fe(m), cmax, s.bla_epsilon);
@@ -576,8 +652,9 @@ impl Renderer {
             let t = BlaTable::<Complex<f64>>::build(len, |m| reference.z(m), cmax.to_f64(), s.bla_epsilon);
             (Arc::new(t), None)
         };
-        self.bla = Some(BlaCache { key, f64: t64.clone(), deep: tdeep.clone() });
-        (t64, tdeep)
+        let id = next_tables_id();
+        self.bla = Some(BlaCache { key, f64: t64.clone(), deep: tdeep.clone(), id });
+        (t64, tdeep, id)
     }
 }
 
@@ -603,6 +680,68 @@ fn periodic_reference(
     }
     let r = Reference::compute(&nr, &ni, limit, spacing, probe, progress)?;
     r.truncated.is_some().then_some(r)
+}
+
+/// Render a pass with `engine`: every pixel, or only those in `list`.
+/// Returns false if the engine did not render it.
+fn engine_pass(
+    engine: &dyn PixelEngine,
+    pass: &Pass,
+    list: Option<&[u32]>,
+    tables_id: u64,
+    frame: &mut Frame,
+    counters: &Counters,
+    progress: &Progress,
+) -> bool {
+    let w = frame.width;
+    let count = list.map_or(frame.n.len(), <[u32]>::len);
+    let index = |k: usize| list.map_or(k as u32, |l| l[k]);
+    progress.set_stage(Progress::PIXELS, 1);
+    let (dcs, deep_dcs): (Vec<Complex<f64>>, Vec<CExp>) = if pass.deep {
+        (0..count)
+            .into_par_iter()
+            .map(|k| {
+                let i = index(k);
+                let dc = pass.dc_fe(i % w, i / w);
+                (flush_c64(dc), CExp::from_cfe(dc))
+            })
+            .unzip()
+    } else {
+        ((0..count).into_par_iter().map(|k| pass.dc64(index(k) % w, index(k) / w)).collect(), Vec::new())
+    };
+    let job = EnginePass {
+        reference: pass.reference,
+        tables_id,
+        shallow: if pass.deep { pass.deep_shallow_phase(Complex::ZERO) } else { pass.phase64(Complex::ZERO) },
+        deep: pass.deep.then(|| pass.deep_phase(<CExp as Cplx>::ZERO)),
+        dcs: &dcs,
+        deep_dcs: &deep_dcs,
+        maxiter: pass.limit,
+        extras: pass.extras,
+        progress,
+    };
+    let Some(results) = engine.iterate(&job) else {
+        return false;
+    };
+    if results.len() != count {
+        return false;
+    }
+    let outs: Vec<Out> = results.par_iter().map(|r| pass.store(r)).collect();
+    let (it, st, dst) = results
+        .par_iter()
+        .map(|r| (r.n, r.steps, r.deep_steps))
+        .reduce(|| (0, 0, 0), |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2));
+    counters.add(it, st, dst);
+    for (k, (n, frac, de)) in outs.into_iter().enumerate() {
+        let i = index(k) as usize;
+        frame.n[i] = n;
+        frame.frac[i] = frac;
+        if let Some(d) = frame.de.get_mut(i) {
+            *d = de;
+        }
+    }
+    progress.done.store(1, Ordering::Relaxed);
+    true
 }
 
 /// Render every pixel, a row at a time.
