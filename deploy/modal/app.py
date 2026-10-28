@@ -28,11 +28,15 @@ import modal
 SERVER = "/usr/local/bin/fracst-server"
 PORT = 7878
 # Seconds without requests before fracst-server drops a connection.
-IDLE_TIMEOUT = int(os.environ.get("FRACST_IDLE_TIMEOUT", "900"))
-# H100s are the cheapest GPUs with fast FP64, which the pixel loop needs;
-# Modal falls back along the list when none is free. Override with
-# FRACST_MODAL_GPU=B200 (or a comma-separated list) at deploy time.
-GPU = os.environ.get("FRACST_MODAL_GPU", "H100,H200,B200").split(",")
+# The app disconnects by itself after a minute without renders; this is
+# the backstop for clients that don't.
+IDLE_TIMEOUT = int(os.environ.get("FRACST_IDLE_TIMEOUT", "120"))
+# The pixel loop needs fast FP64. A100s have it at half the price of an
+# H100 (and about a third of the speed), and most of the bill is time the
+# GPU waits for the user, so they cost least. Modal falls back along the
+# list when none is free. Override with FRACST_MODAL_GPU=H100 (or a
+# comma-separated list) at deploy time.
+GPU = os.environ.get("FRACST_MODAL_GPU", "A100-40GB,A100-80GB,H100").split(",")
 
 # Paths only matter where the image is built from; the module is imported
 # again inside the container, where the repository isn't.
@@ -51,7 +55,7 @@ app = modal.App("fracst")
     gpu=GPU,
     min_containers=0,
     max_containers=1,
-    scaledown_window=300,
+    scaledown_window=60,
     # A connection lasts as long as the client stays connected.
     timeout=4 * 3600,
 )

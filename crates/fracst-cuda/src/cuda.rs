@@ -223,10 +223,10 @@ fn compile(major: i32, minor: i32) -> Result<(Ptx, String), String> {
     match nvrtc_compile(&src, &[&format!("--gpu-architecture={arch}")], true) {
         Ok((cubin, _)) => Ok((Ptx::from_binary(cubin), arch)),
         Err(first) => {
-            let (ptx, _) = nvrtc_compile(&src, &["--gpu-architecture=compute_90"], false)
-                .map_err(|e| format!("NVRTC failed for {arch}: {first}\nand for compute_90: {e}"))?;
+            let (ptx, _) = nvrtc_compile(&src, &["--gpu-architecture=compute_80"], false)
+                .map_err(|e| format!("NVRTC failed for {arch}: {first}\nand for compute_80: {e}"))?;
             let ptx = String::from_utf8_lossy(&ptx).trim_end_matches('\0').to_string();
-            Ok((Ptx::from_src(ptx), "compute_90 PTX".into()))
+            Ok((Ptx::from_src(ptx), "compute_80 PTX".into()))
         }
     }
 }

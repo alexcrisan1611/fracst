@@ -12,8 +12,8 @@ fn kernels_compile_with_nvrtc() {
         return;
     }
     let src = kernel_source();
-    // H100/H200, B200/GB200, B300/GB300, RTX 50.
-    for arch in ["sm_90", "sm_100", "sm_103", "sm_120"] {
+    // A100, H100/H200, B200/GB200, B300/GB300, RTX 50.
+    for arch in ["sm_80", "sm_90", "sm_100", "sm_103", "sm_120"] {
         let option = format!("--gpu-architecture={arch}");
         match nvrtc_compile(&src, &[&option, "--ptxas-options=-v"], true) {
             Ok((cubin, log)) => {
@@ -26,7 +26,7 @@ fn kernels_compile_with_nvrtc() {
             Err(log) => panic!("{arch} failed:\n{log}"),
         }
     }
-    let (ptx, _) = nvrtc_compile(&src, &["--gpu-architecture=compute_90"], false).expect("PTX");
+    let (ptx, _) = nvrtc_compile(&src, &["--gpu-architecture=compute_80"], false).expect("PTX");
     let ptx = String::from_utf8_lossy(&ptx);
     for kernel in KERNELS {
         assert!(ptx.contains(&format!(".entry {kernel}")), "PTX lacks {kernel}");

@@ -14,7 +14,7 @@ on:
     inputs:
       gpu:
         description: Modal GPU types to try, in order
-        default: H100,H200,B200
+        default: A100-40GB,A100-80GB,H100
       selftest:
         description: Run the GPU self-test after deploying
         type: boolean
@@ -30,7 +30,7 @@ jobs:
     env:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-      FRACST_MODAL_GPU: ${{ inputs.gpu || 'H100,H200,B200' }}
+      FRACST_MODAL_GPU: ${{ inputs.gpu || 'A100-40GB,A100-80GB,H100' }}
     defaults:
       run:
         # Explicitly bash, for pipefail: a failed step fails the job.
