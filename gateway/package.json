@@ -1,0 +1,18 @@
+{
+	"name": "fracst-gateway",
+	"private": true,
+	"description": "Cloudflare Worker that lets the fracst app render on a fal.ai GPU with fracst keys",
+	"type": "module",
+	"scripts": {
+		"dev": "wrangler dev",
+		"deploy": "wrangler deploy",
+		"types": "wrangler types --strict-vars false",
+		"check": "wrangler types --strict-vars false && tsc --noEmit",
+		"smoke": "node test/smoke.mjs",
+		"keys": "node scripts/keys.mjs"
+	},
+	"devDependencies": {
+		"typescript": "^5.9.0",
+		"wrangler": "^4.152.0"
+	}
+}

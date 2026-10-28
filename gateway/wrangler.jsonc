@@ -1,0 +1,28 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "fracst-gateway",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-10-01",
+	"durable_objects": {
+		"bindings": [
+			// One per connection: relays it to the GPU server.
+			{ "name": "SESSIONS", "class_name": "Session" },
+			// A single one: keys, usage and open sessions.
+			{ "name": "REGISTRY", "class_name": "Registry" }
+		]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["Session", "Registry"] }],
+	"vars": {
+		// The fal app to relay to, as "<fal user>/<app name>", e.g. "alex/fracst".
+		"FAL_APP": "",
+		// Instead of fal.ai, relay to this fracst-server (for testing), e.g. "ws://127.0.0.1:7878".
+		"UPSTREAM_URL": "",
+		// A session is closed after this long; the app can reconnect.
+		"MAX_SESSION_MINUTES": "120",
+		// Sessions one key may have open at once.
+		"MAX_SESSIONS_PER_KEY": "2"
+	},
+	// Secrets (wrangler secret put NAME): FAL_KEY, the fal.ai key the gateway
+	// uses; ADMIN_TOKEN, for the /admin endpoints.
+	"observability": { "enabled": true }
+}
