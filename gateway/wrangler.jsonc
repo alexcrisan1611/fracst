@@ -15,7 +15,7 @@
 	"vars": {
 		// The fracst-server to relay to: on Modal "wss://<workspace>--fracst.modal.run",
 		// or for testing "ws://127.0.0.1:7878".
-		"UPSTREAM_URL": "",
+		"UPSTREAM_URL": "wss://solarenterprise--fracst.us-east.modal.run",
 		// Or a fal app, as "<fal user>/<app name>", e.g. "alex/fracst".
 		"FAL_APP": "",
 		// A session is closed after this long; the app can reconnect.

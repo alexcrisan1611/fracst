@@ -79,8 +79,8 @@ struct Args {
     /// Also write the location as a .kfr file next to the PNG.
     #[arg(long)]
     save_kfr: bool,
-    /// Render on a remote fracst server: ws://host:7878, or the stream
-    /// endpoint of a fal.ai deployment (wss://fal.run/<user>/<app>/stream).
+    /// Render on a remote fracst server: ws://host:7878, a fracst gateway's
+    /// wss://…/stream, or a Modal or fal.ai deployment's address.
     #[arg(long, value_name = "URL")]
     remote: Option<String>,
     /// Key for --remote (default: $FRACST_REMOTE_KEY, then $FAL_KEY).
