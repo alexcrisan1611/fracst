@@ -13,4 +13,5 @@ path = "src/main.rs"
 
 [dependencies]
 fracst-core.workspace = true
+fracst-remote = { path = "../fracst-remote" }
 clap.workspace = true

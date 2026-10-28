@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/fracst-core", "crates/fracst-cli", "crates/fracst"]
+members = ["crates/fracst-core", "crates/fracst-cli", "crates/fracst", "crates/fracst-cuda", "crates/fracst-remote", "crates/fracst-server"]
 
 [workspace.package]
 version = "0.1.0"

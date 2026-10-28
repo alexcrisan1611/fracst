@@ -1,0 +1,19 @@
+[package]
+name = "fracst-remote"
+description = "Remote rendering for fracst: protocol, frame compression and client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fracst-core.workspace = true
+rayon.workspace = true
+serde = { version = "1", features = ["derive"] }
+# Exact f64s: views must arrive bit for bit.
+serde_json = { version = "1", features = ["float_roundtrip"] }
+zstd = "0.14"
+tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
+# tungstenite's rustls comes without a crypto provider.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

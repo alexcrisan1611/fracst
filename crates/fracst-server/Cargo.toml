@@ -1,0 +1,20 @@
+[package]
+name = "fracst-server"
+description = "Renders fracst frames for remote clients, on a CUDA GPU when there is one"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fracst-core.workspace = true
+fracst-cuda = { path = "../fracst-cuda" }
+fracst-remote = { path = "../fracst-remote" }
+clap.workspace = true
+serde_json = "1"
+tungstenite = "0.30"
+
+[dev-dependencies]
+# Runs the kernel's code on the CPU, so the tests cover the GPU engine path without a GPU.
+fracst-cuda = { path = "../fracst-cuda", features = ["host-kernel"] }

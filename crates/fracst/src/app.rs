@@ -1,4 +1,5 @@
-use crate::worker::{Outcome, Task, Worker};
+use crate::remote_config;
+use crate::worker::{Outcome, RemoteConfig, RemoteStatus, Task, Worker};
 use eframe::egui::{
     self, CollapsingHeader, Color32, ComboBox, DragValue, Key, PointerButton, Pos2, Rect, Sense, Slider, TextEdit,
     TextureHandle, TextureOptions, Vec2, ViewportCommand,
@@ -11,6 +12,8 @@ struct Shown {
     view: View,
     frame: Frame,
     preview: bool,
+    /// Set for frames rendered on a remote server.
+    round_trip: Option<Duration>,
 }
 
 /// Editable text versions of the location, regenerated when the view changes.
@@ -48,6 +51,11 @@ pub struct App {
     show_help: bool,
     export_size: [u32; 2],
     export_supersample: u32,
+    remote_url: String,
+    remote_key: String,
+    remote_status: RemoteStatus,
+    /// Of the latest connect/disconnect, to ignore stale reports.
+    remote_generation: u64,
     /// Testing hook: save a screenshot of the window here once rendering settles, then exit.
     screenshot_to: Option<std::path::PathBuf>,
     screenshot_frames: u32,
@@ -55,7 +63,19 @@ pub struct App {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        App {
+        let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+        // The server: from the environment, else the last one connected to,
+        // else the default this build was made with.
+        let saved = remote_config::load();
+        let nonempty = |s: String| (!s.is_empty()).then_some(s);
+        let auto_connect = env("FRACST_REMOTE_URL").is_some();
+        let remote_url = env("FRACST_REMOTE_URL")
+            .or_else(|| nonempty(saved.url.clone()))
+            .or_else(|| option_env!("FRACST_DEFAULT_REMOTE_URL").map(String::from).and_then(nonempty))
+            .unwrap_or_default();
+        let remote_key =
+            env("FRACST_REMOTE_KEY").or_else(|| env("FAL_KEY")).or_else(|| nonempty(saved.key)).unwrap_or_default();
+        let mut app = App {
             worker: Worker::spawn(cc.egui_ctx.clone()),
             view: View::default(),
             settings: Settings { auto_iterations: true, ..Settings::default() },
@@ -78,22 +98,37 @@ impl App {
             show_help: false,
             export_size: [1920, 1080],
             export_supersample: 2,
+            remote_url,
+            remote_key,
+            remote_status: RemoteStatus::Off,
+            remote_generation: 0,
             screenshot_to: std::env::var_os("FRACST_SCREENSHOT").map(Into::into),
             screenshot_frames: 0,
+        };
+        // Connecting may start a paid GPU, so only when asked to.
+        if auto_connect {
+            app.connect_remote();
         }
+        app
+    }
+
+    fn connect_remote(&mut self) {
+        let config = RemoteConfig { url: self.remote_url.trim().to_string(), key: self.remote_key.trim().to_string() };
+        self.remote_generation = self.worker.connect_remote(config);
+        self.remote_status = RemoteStatus::Connecting(String::new());
     }
 
     fn poll_worker(&mut self, ctx: &egui::Context) {
         while let Ok(msg) = self.worker.rx.try_recv() {
             match msg.outcome {
-                Outcome::Frame { view, frame, preview } => {
+                Outcome::Frame { view, frame, preview, round_trip } => {
                     let frame = *frame;
                     if msg.id != self.render_id {
                         continue;
                     }
                     if !preview {
                         self.worker.finished(msg.id);
-                        self.last_render_secs = frame.stats.total.as_secs_f64();
+                        self.last_render_secs = round_trip.unwrap_or(frame.stats.total).as_secs_f64();
                         // Start the next frame from the limit this one suggests. The
                         // frame on screen is already complete, so don't re-render it.
                         let suggested = frame.stats.suggested_maxiter;
@@ -105,8 +140,22 @@ impl App {
                             }
                         }
                     }
-                    self.shown = Some(Shown { view, frame, preview });
+                    self.shown = Some(Shown { view, frame, preview, round_trip });
                     self.recolour = true;
+                }
+                Outcome::Remote { generation, status } => {
+                    if generation == self.remote_generation {
+                        // Show the view rendered where it now renders, and
+                        // remember the server for next time.
+                        if matches!(status, RemoteStatus::Connected(_)) {
+                            self.requested = None;
+                            remote_config::save(&remote_config::Saved {
+                                url: self.remote_url.trim().to_string(),
+                                key: self.remote_key.trim().to_string(),
+                            });
+                        }
+                        self.remote_status = status;
+                    }
                 }
                 Outcome::Minibrot(result) => {
                     self.worker.finished(msg.id);
@@ -233,6 +282,7 @@ impl App {
         CollapsingHeader::new("Navigation").default_open(true).show(ui, |ui| self.navigation_ui(ui));
         CollapsingHeader::new("Colour").default_open(true).show(ui, |ui| self.colour_ui(ui));
         CollapsingHeader::new("Rendering").default_open(false).show(ui, |ui| self.rendering_ui(ui));
+        CollapsingHeader::new("Remote GPU").default_open(!self.remote_url.is_empty()).show(ui, |ui| self.remote_ui(ui));
         CollapsingHeader::new("Export").default_open(false).show(ui, |ui| self.export_ui(ui));
         CollapsingHeader::new("Statistics").default_open(true).show(ui, |ui| self.stats_ui(ui));
     }
@@ -418,6 +468,62 @@ impl App {
             .on_hover_text("The default for .kfr files without ImagPointsUp");
     }
 
+    fn remote_ui(&mut self, ui: &mut egui::Ui) {
+        egui::Grid::new("remote").num_columns(2).show(ui, |ui| {
+            ui.label("Server");
+            ui.add(
+                TextEdit::singleline(&mut self.remote_url)
+                    .hint_text("wss://fracst-gateway.you.workers.dev/stream")
+                    .desired_width(230.0),
+            )
+            .on_hover_text(
+                "A fracst gateway's /stream address, a fal.ai deployment's stream endpoint, or ws://host:7878 for a fracst-server",
+            );
+            ui.end_row();
+            ui.label("Key");
+            ui.add(
+                TextEdit::singleline(&mut self.remote_key)
+                    .password(true)
+                    .hint_text("fracst key (fst_…), fal key or server token")
+                    .desired_width(230.0),
+            );
+            ui.end_row();
+        });
+        let active = matches!(self.remote_status, RemoteStatus::Connecting(_) | RemoteStatus::Connected(_));
+        ui.horizontal(|ui| {
+            let label = if active { "Reconnect" } else { "Connect" };
+            if ui.add_enabled(!self.remote_url.trim().is_empty(), egui::Button::new(label)).clicked() {
+                self.connect_remote();
+            }
+            if active && ui.button("Disconnect").clicked() {
+                self.remote_generation = self.worker.disconnect_remote();
+                self.remote_status = RemoteStatus::Off;
+                self.requested = None;
+            }
+        });
+        match &self.remote_status {
+            RemoteStatus::Off => {
+                ui.label("Rendering on this computer.");
+            }
+            RemoteStatus::Connecting(message) => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    if message.is_empty() {
+                        ui.label("Connecting… a GPU that was idle can take a minute or two to start.");
+                    } else {
+                        ui.label(message);
+                    }
+                });
+            }
+            RemoteStatus::Connected(engine) => {
+                ui.label(format!("Rendering on {engine}"));
+            }
+            RemoteStatus::Failed(e) => {
+                ui.colored_label(Color32::from_rgb(230, 110, 90), format!("Remote: {e}"));
+            }
+        }
+    }
+
     fn export_ui(&mut self, ui: &mut egui::Ui) {
         egui::Grid::new("export").num_columns(2).show(ui, |ui| {
             ui.label("Size");
@@ -468,7 +574,14 @@ impl App {
                 ui.end_row();
             };
             row("Frame", format!("{}×{}{}", f.width, f.height, if shown.preview { " (preview)" } else { "" }));
-            row("Total", format!("{:.3} s", st.total.as_secs_f64()));
+            if let Some(rt) = shown.round_trip {
+                row("Round trip", format!("{:.3} s (server {:.3} s)", rt.as_secs_f64(), st.total.as_secs_f64()));
+                if let RemoteStatus::Connected(engine) = &self.remote_status {
+                    row("Rendered on", engine.split(" · ").next().unwrap_or(engine).to_string());
+                }
+            } else {
+                row("Total", format!("{:.3} s", st.total.as_secs_f64()));
+            }
             row(
                 "Iteration limit",
                 if st.rounds > 1 { format!("{} ({} passes)", f.maxiter, st.rounds) } else { f.maxiter.to_string() },
@@ -681,7 +794,9 @@ impl eframe::App for App {
         if self.recolour {
             ctx.request_repaint();
         }
-        let settled = self.worker.current().is_none() && self.shown.as_ref().is_some_and(|s| !s.preview);
+        let settled = self.worker.current().is_none()
+            && self.shown.as_ref().is_some_and(|s| !s.preview)
+            && !matches!(self.remote_status, RemoteStatus::Connecting(_));
         if settled && let Some(path) = self.screenshot_to.take() {
             ctx.request_screenshot(move |img| {
                 let rgba: Vec<u8> = img.pixels.iter().flat_map(|c| c.to_array()).collect();

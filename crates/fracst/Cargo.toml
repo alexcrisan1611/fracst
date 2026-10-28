@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 fracst-core.workspace = true
+fracst-remote = { path = "../fracst-remote" }
 eframe.workspace = true
 rfd.workspace = true
 

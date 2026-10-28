@@ -1,5 +1,5 @@
 use clap::Parser;
-use fracst_core::{Colouring, FloatExp, Progress, Renderer, Settings, View, image, kfr, newton};
+use fracst_core::{Colouring, FloatExp, Frame, Progress, Renderer, Settings, View, image, kfr, newton};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -79,6 +79,43 @@ struct Args {
     /// Also write the location as a .kfr file next to the PNG.
     #[arg(long)]
     save_kfr: bool,
+    /// Render on a remote fracst server: ws://host:7878, or the stream
+    /// endpoint of a fal.ai deployment (wss://fal.run/<user>/<app>/stream).
+    #[arg(long, value_name = "URL")]
+    remote: Option<String>,
+    /// Key for --remote (default: $FRACST_REMOTE_KEY, then $FAL_KEY).
+    #[arg(long)]
+    key: Option<String>,
+}
+
+/// Renders locally or on a remote server.
+enum Backend {
+    Local(Renderer),
+    Remote(Box<fracst_remote::Client>),
+}
+
+impl Backend {
+    fn new(args: &Args) -> Result<Self, String> {
+        let Some(url) = &args.remote else { return Ok(Backend::Local(Renderer::new())) };
+        let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+        let key = args.key.clone().or_else(|| env("FRACST_REMOTE_KEY")).or_else(|| env("FAL_KEY"));
+        let t = Instant::now();
+        let client = fracst_remote::Client::connect(url, key.as_deref())?;
+        println!(
+            "remote  {} (fracst {}, connected in {:.1}s)",
+            client.engine,
+            client.version,
+            t.elapsed().as_secs_f64()
+        );
+        Ok(Backend::Remote(Box::new(client)))
+    }
+
+    fn render(&mut self, view: &View, settings: &Settings) -> Result<Frame, String> {
+        match self {
+            Backend::Local(r) => r.render(view, settings, &Progress::default()).ok_or_else(|| "cancelled".into()),
+            Backend::Remote(c) => c.render(view, settings, &Progress::default())?.ok_or_else(|| "cancelled".into()),
+        }
+    }
 }
 
 fn main() {
@@ -146,17 +183,29 @@ fn run(args: Args) -> Result<(), String> {
     }
     println!("centre  {} {}", short(&view.re_string()), short(&view.im_string()));
     println!("zoom    {:.6}  iterations {}  size {}x{}", view.zoom, view.maxiter, settings.width, settings.height);
-    let mut renderer = Renderer::new();
+    let mut backend = Backend::new(&args)?;
     let mut best = None;
     for i in 0..args.repeat.max(1) {
         let t = Instant::now();
-        let frame = renderer.render(&view, &settings, &Progress::default()).ok_or("cancelled")?;
+        let frame = backend.render(&view, &settings)?;
         let elapsed = t.elapsed();
         let st = &frame.stats;
+        if let Backend::Remote(client) = &backend
+            && let Some(t) = client.last
+        {
+            println!(
+                "run {}: {:.3}s round trip: {:.3}s rendering and {:.3}s compressing on the server, {:.1} MB received",
+                i + 1,
+                elapsed.as_secs_f64(),
+                t.render_s,
+                t.encode_s,
+                t.bytes as f64 / 1e6
+            );
+        }
         println!(
             "run {}: {:.3}s total | reference {:.3}s ({} iters{}{}, {} limbs) | bla {:.3}s ({} levels) | pixels {:.3}s [{}]",
             i + 1,
-            elapsed.as_secs_f64(),
+            st.total.as_secs_f64(),
             st.reference.as_secs_f64(),
             st.reference_len,
             if st.reference_escaped {
@@ -228,7 +277,7 @@ fn zoom_out(
 ) -> Result<(), String> {
     let ss = args.supersample.max(1);
     let stem = args.output.with_extension("");
-    let mut renderer = Renderer::new();
+    let mut backend = Backend::new(args)?;
     let started = Instant::now();
     for i in 0..frames {
         if view.zoom < FloatExp::from(0.5) {
@@ -236,7 +285,7 @@ fn zoom_out(
             break;
         }
         let t = Instant::now();
-        let frame = renderer.render(&view, settings, &Progress::default()).ok_or("cancelled")?;
+        let frame = backend.render(&view, settings)?;
         let rgba = image::downscale(&colouring.apply(&frame), frame.width, frame.height, ss);
         let path = PathBuf::from(format!("{}-{i:05}.png", stem.display()));
         image::save_png(&path, &rgba, args.width, args.height, Some(&kfr::to_string(&view, colouring)))?;

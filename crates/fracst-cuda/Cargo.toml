@@ -1,0 +1,21 @@
+[package]
+name = "fracst-cuda"
+description = "CUDA pixel engine for fracst"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+# Also compile the kernel for the host CPU, to test it without a GPU.
+host-kernel = ["dep:cc"]
+
+[dependencies]
+fracst-core.workspace = true
+rayon.workspace = true
+# Loads the CUDA driver and NVRTC at run time: building needs no CUDA toolkit.
+cudarc = { version = "0.19", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-loading", "cuda-12080"] }
+
+[build-dependencies]
+cc = { version = "1.2", optional = true }
