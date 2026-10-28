@@ -100,7 +100,7 @@ jobs:
            command-line renderer (fracst-cli) and a render server for remote
            GPUs (fracst-server).
           CONTROL
-          dpkg-deb --build --root-owner-group "$deb" "fracst-$VERSION-linux-amd64.deb"
+          dpkg-deb --build --root-owner-group -Zxz "$deb" "fracst-$VERSION-linux-amd64.deb"
 
       - name: Build and package (Windows)
         if: runner.os == 'Windows'
