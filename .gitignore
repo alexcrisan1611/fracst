@@ -3,3 +3,4 @@
 /bench-locations
 *.png
 !assets/*.png
+__pycache__/

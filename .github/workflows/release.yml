@@ -21,6 +21,9 @@ jobs:
   build:
     name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    env:
+      # Optional repository variable: the gateway address the app suggests.
+      FRACST_DEFAULT_REMOTE_URL: ${{ vars.FRACST_DEFAULT_REMOTE_URL }}
     strategy:
       fail-fast: false
       matrix:
@@ -65,10 +68,10 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          cargo build --release --locked -p fracst -p fracst-cli
+          cargo build --release --locked -p fracst -p fracst-cli -p fracst-server
           dist="fracst-$VERSION-linux-x86_64"
           mkdir "$dist"
-          cp target/release/fracst target/release/fracst-cli README.md LICENSE-MIT LICENSE-APACHE "$dist/"
+          cp target/release/fracst target/release/fracst-cli target/release/fracst-server README.md LICENSE-MIT LICENSE-APACHE "$dist/"
           cp assets/icon.png "$dist/fracst.png"
           tar czf "$dist.tar.gz" "$dist"
 
@@ -76,10 +79,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          cargo build --release --locked -p fracst -p fracst-cli
+          cargo build --release --locked -p fracst -p fracst-cli -p fracst-server
           dist="fracst-$VERSION-windows-x86_64"
           mkdir "$dist"
-          cp target/release/fracst.exe target/release/fracst-cli.exe README.md LICENSE-MIT LICENSE-APACHE "$dist/"
+          cp target/release/fracst.exe target/release/fracst-cli.exe target/release/fracst-server.exe README.md LICENSE-MIT LICENSE-APACHE "$dist/"
           7z a "$dist.zip" "$dist"
 
       - name: Build and package (macOS, universal)

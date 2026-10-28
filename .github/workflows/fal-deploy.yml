@@ -1,0 +1,49 @@
+# Deploys the GPU render server (deploy/fal/app.py) to fal.ai. fal builds
+# the image from deploy/fal/Dockerfile on its own machines; this job only
+# uploads the source. Needs the repository secret FAL_KEY (an ADMIN key).
+#
+# Start it from the Actions tab (Run workflow), or push a fal-deploy-* tag.
+# Deploying costs nothing by itself; fal bills while a GPU runner is up.
+
+name: Deploy to fal
+
+on:
+  workflow_dispatch:
+    inputs:
+      machine:
+        description: fal machine types to try, in order
+        default: GPU-H100,GPU-H200,GPU-B200
+  push:
+    tags: ["fal-deploy-*"]
+
+concurrency: fal-deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The image runs Python 3.11, and fal pickles the app with the
+      # Python that deploys it.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install fal
+      - name: fal deploy
+        # Explicitly bash, for pipefail: a failed deploy fails the job.
+        shell: bash
+        env:
+          FAL_KEY: ${{ secrets.FAL_KEY }}
+          FRACST_FAL_MACHINE: ${{ inputs.machine || 'GPU-H100,GPU-H200,GPU-B200' }}
+        run: |
+          if [ -z "$FAL_KEY" ]; then
+            echo "::error::Add the repository secret FAL_KEY (an ADMIN-scoped fal key)."
+            exit 1
+          fi
+          fal deploy deploy/fal/app.py::Fracst 2>&1 | tee deploy.log
+          {
+            echo "## fal deploy"
+            echo '```'
+            tail -n 20 deploy.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
