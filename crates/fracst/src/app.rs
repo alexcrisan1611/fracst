@@ -1,11 +1,15 @@
+mod commands;
+
 use crate::glide::{self, Glide};
 use crate::prefs::{self, Prefs};
 use crate::remote_config;
+use crate::search::Search;
 use crate::theme;
 use crate::update::{self, Release};
 use crate::video::VideoPanel;
 use crate::window;
 use crate::worker::{Outcome, RemoteConfig, RemoteStatus, Task, Worker};
+use commands::{Cmd, Section, Spot, Spotlight, spot};
 use eframe::egui::{
     self, Align2, CollapsingHeader, Color32, ComboBox, DragValue, Id, Key, Modifiers, PointerButton, Pos2, Rect,
     RichText, Sense, Slider, StrokeKind, TextEdit, TextureHandle, TextureId, TextureOptions, Vec2, epaint::RectShape,
@@ -107,6 +111,10 @@ pub struct App {
     update: Option<Release>,
     video: VideoPanel,
     prefs: Prefs,
+    /// The Ctrl+K palette.
+    search: Search,
+    /// A control the palette took you to.
+    spotlight: Option<Spotlight>,
     logo: Option<TextureHandle>,
     /// The theme's accent, which follows the palette.
     accent: Color32,
@@ -114,7 +122,13 @@ pub struct App {
     screenshot_to: Option<std::path::PathBuf>,
     /// With the screenshot: first zoom in, held this far through the glide.
     screenshot_glide: Option<f64>,
+    /// With the screenshot: first run these palette entries, by key.
+    screenshot_run: Vec<String>,
+    /// With the screenshot: show the palette with this query.
+    screenshot_search: Option<String>,
     screenshot_frames: u32,
+    /// Let the interface settle after a hook's action before the screenshot.
+    screenshot_hold: Instant,
 }
 
 impl App {
@@ -170,7 +184,8 @@ impl App {
             minibrot_fill: 0.25,
             palette_seed: 1,
             fields: Fields::default(),
-            status: "Left click: zoom in · right click: zoom out · wheel: zoom at cursor · drag: pan".into(),
+            status: "Click: zoom in · right click: zoom out · wheel: zoom at cursor · drag: pan · Ctrl+K: everything"
+                .into(),
             show_location: false,
             location_text: String::new(),
             show_help: false,
@@ -185,12 +200,19 @@ impl App {
             update_rx,
             update: None,
             video: VideoPanel::new(cc.egui_ctx.clone()),
-            prefs: Prefs::load(),
+            prefs: Prefs { read_only: screenshot_to.is_some(), ..Prefs::load() },
+            search: Search::default(),
+            spotlight: None,
             logo,
             accent,
             screenshot_to,
             screenshot_glide: env("FRACST_SCREENSHOT_GLIDE").and_then(|v| v.trim().parse().ok()),
+            screenshot_run: env("FRACST_SCREENSHOT_RUN")
+                .map(|v| v.split(';').map(|k| k.trim().to_string()).filter(|k| !k.is_empty()).collect())
+                .unwrap_or_default(),
+            screenshot_search: std::env::var("FRACST_SCREENSHOT_SEARCH").ok(),
             screenshot_frames: 0,
+            screenshot_hold: Instant::now(),
         };
         // Connecting may start a paid GPU, so only when asked to.
         if auto_connect {
@@ -316,6 +338,44 @@ impl App {
                 self.worker.submit(Task::Render { view: want.0.clone(), settings: want.1.clone(), preview });
             self.requested = Some(want);
         }
+    }
+
+    fn find_minibrot(&mut self) {
+        if self.blocking.is_some() {
+            return;
+        }
+        let task =
+            Task::FindMinibrot { view: self.view.clone(), height: self.settings.height, fill: self.minibrot_fill };
+        self.start_blocking(task, "Finding minibrot");
+    }
+
+    fn cancel_render(&mut self) {
+        if self.worker.current().is_none() {
+            return;
+        }
+        self.worker.cancel();
+        self.blocking = None;
+        // Do not immediately resubmit the cancelled render.
+        self.requested = Some((self.view.clone(), self.settings.clone()));
+    }
+
+    fn random_palette(&mut self) {
+        self.palette_seed += 1;
+        let n = 4 + (self.palette_seed % 6) as usize;
+        self.colouring.palette = Palette::random(self.palette_seed, n);
+        self.recolour = true;
+    }
+
+    fn disconnect_remote(&mut self) {
+        self.remote_generation = self.worker.disconnect_remote();
+        self.remote_status = RemoteStatus::Off;
+        self.requested = None;
+    }
+
+    /// The remote server and key, if one is set.
+    fn remote(&self) -> Option<(String, String)> {
+        Some((self.remote_url.trim().to_string(), self.remote_key.trim().to_string()))
+            .filter(|(url, _)| !url.is_empty())
     }
 
     fn start_blocking(&mut self, task: Task, label: &'static str) {
@@ -498,22 +558,36 @@ impl App {
     // ---- side panel -----------------------------------------------------------
 
     fn controls(&mut self, ui: &mut egui::Ui) {
-        fn section(ui: &mut egui::Ui, title: &str, open: bool, add: impl FnOnce(&mut egui::Ui)) {
+        fn section(ui: &mut egui::Ui, title: &str, open: bool, force: bool, add: impl FnOnce(&mut egui::Ui)) {
             CollapsingHeader::new(RichText::new(title).font(theme::strong(14.0)).color(theme::TEXT))
                 .default_open(open)
+                .open(force.then_some(true))
                 .show(ui, |ui| {
                     add(ui);
                     ui.add_space(4.0);
                 });
         }
-        section(ui, "Location", true, |ui| self.location_ui(ui));
-        section(ui, "Navigation", true, |ui| self.navigation_ui(ui));
-        section(ui, "Colour", true, |ui| self.colour_ui(ui));
-        section(ui, "Rendering", false, |ui| self.rendering_ui(ui));
-        section(ui, "Remote GPU", !self.remote_url.is_empty(), |ui| self.remote_ui(ui));
-        section(ui, "Export", false, |ui| self.export_ui(ui));
-        section(ui, "Statistics", true, |ui| self.stats_ui(ui));
-        section(ui, "App", false, |ui| self.app_ui(ui));
+        // The palette opens the section of the control it takes you to.
+        let force = |s: Section| self.spotlight.as_ref().is_some_and(|l| l.opens(s));
+        let remote_open = !self.remote_url.is_empty();
+        let f = [
+            Section::Location,
+            Section::Navigation,
+            Section::Colour,
+            Section::Rendering,
+            Section::Remote,
+            Section::Export,
+            Section::Statistics,
+        ]
+        .map(force);
+        section(ui, "Location", true, f[0], |ui| self.location_ui(ui));
+        section(ui, "Navigation", true, f[1], |ui| self.navigation_ui(ui));
+        section(ui, "Colour", true, f[2], |ui| self.colour_ui(ui));
+        section(ui, "Rendering", false, f[3], |ui| self.rendering_ui(ui));
+        section(ui, "Remote GPU", remote_open, f[4], |ui| self.remote_ui(ui));
+        section(ui, "Export", false, f[5], |ui| self.export_ui(ui));
+        section(ui, "Statistics", true, f[6], |ui| self.stats_ui(ui));
+        section(ui, "App", false, false, |ui| self.app_ui(ui));
     }
 
     fn app_ui(&mut self, ui: &mut egui::Ui) {
@@ -523,6 +597,7 @@ impl App {
         if ui.button("Controls…").clicked() {
             self.show_help = true;
         }
+        ui.label(RichText::new(format!("fracst {}", env!("CARGO_PKG_VERSION"))).color(theme::TEXT_WEAK));
     }
 
     fn sync_fields(&mut self) {
@@ -542,16 +617,21 @@ impl App {
         fn mono(s: &mut String) -> TextEdit<'_> {
             TextEdit::multiline(s).desired_rows(1).code_editor().desired_width(f32::INFINITY)
         }
+        let light = &mut self.spotlight;
         ui.label("Real");
-        ui.add(mono(&mut self.fields.re));
+        let r = ui.add(mono(&mut self.fields.re));
+        spot(ui, &r, Spot::Real, light);
         ui.label("Imaginary");
-        ui.add(mono(&mut self.fields.im));
+        let r = ui.add(mono(&mut self.fields.im));
+        spot(ui, &r, Spot::Imaginary, light);
         egui::Grid::new("zoom-iter").num_columns(2).show(ui, |ui| {
             ui.label("Zoom");
-            ui.add(TextEdit::singleline(&mut self.fields.zoom).desired_width(140.0));
+            let r = ui.add(TextEdit::singleline(&mut self.fields.zoom).desired_width(140.0));
+            spot(ui, &r, Spot::Zoom, light);
             ui.end_row();
             ui.label("Iterations");
-            ui.add(TextEdit::singleline(&mut self.fields.iterations).desired_width(140.0));
+            let r = ui.add(TextEdit::singleline(&mut self.fields.iterations).desired_width(140.0));
+            spot(ui, &r, Spot::Iterations, light);
             ui.end_row();
         });
         ui.horizontal(|ui| {
@@ -566,7 +646,7 @@ impl App {
                 }
             }
             if ui.button("Reset").clicked() {
-                self.view = View::default();
+                self.view = View { imag_down: self.view.imag_down, ..View::default() };
                 self.jump = true;
             }
             if ui.button("Copy").on_hover_text("Copy the location as .kfr text").clicked() {
@@ -610,15 +690,12 @@ impl App {
                 .on_hover_text("Newton's method: jump to the lowest-period minibrot near the centre")
                 .clicked()
             {
-                let task = Task::FindMinibrot {
-                    view: self.view.clone(),
-                    height: self.settings.height,
-                    fill: self.minibrot_fill,
-                };
-                self.start_blocking(task, "Finding minibrot");
+                self.find_minibrot();
             }
-            ui.add(Slider::new(&mut self.minibrot_fill, 0.001..=2.0).logarithmic(true).text("fill"))
+            let r = ui
+                .add(Slider::new(&mut self.minibrot_fill, 0.001..=2.0).logarithmic(true).text("fill"))
                 .on_hover_text("How large the minibrot appears (1 = full height)");
+            spot(ui, &r, Spot::MinibrotFill, &mut self.spotlight);
         });
         ui.checkbox(&mut self.settings.auto_iterations, "Auto iterations").on_hover_text(
             "Choose the iteration limit per frame: enough for any minibrot near the view,              raised when pixels are cut off, lowered again when the view needs less",
@@ -628,6 +705,7 @@ impl App {
     fn colour_ui(&mut self, ui: &mut egui::Ui) {
         let before = self.colouring.clone();
         let c = &mut self.colouring;
+        let light = &mut self.spotlight;
         ui.horizontal(|ui| {
             ComboBox::from_id_salt("palette").selected_text("Palette preset").show_ui(ui, |ui| {
                 for (name, p) in Palette::presets() {
@@ -644,7 +722,7 @@ impl App {
         });
         let mut keys = c.palette.keys().to_vec();
         let mut changed = false;
-        ui.horizontal_wrapped(|ui| {
+        let r = ui.horizontal_wrapped(|ui| {
             for k in keys.iter_mut() {
                 changed |= ui.color_edit_button_srgb(k).changed();
             }
@@ -657,12 +735,16 @@ impl App {
                 changed = true;
             }
         });
+        spot(ui, &r.response, Spot::PaletteKeys, light);
         if changed {
             c.palette = Palette::new(keys);
         }
-        ui.add(Slider::new(&mut c.iter_div, 0.0001..=10000.0).logarithmic(true).text("iter div"))
+        let r = ui
+            .add(Slider::new(&mut c.iter_div, 0.0001..=10000.0).logarithmic(true).text("iter div"))
             .on_hover_text("Iterations per palette step (IterDiv). Smaller = more colour bands");
-        ui.add(Slider::new(&mut c.offset, 0.0..=1024.0).text("offset"));
+        spot(ui, &r, Spot::IterDiv, light);
+        let r = ui.add(Slider::new(&mut c.offset, 0.0..=1024.0).text("offset"));
+        spot(ui, &r, Spot::Offset, light);
         ComboBox::from_label("transfer").selected_text(c.transfer.name()).show_ui(ui, |ui| {
             for t in Transfer::ALL {
                 ui.selectable_value(&mut c.transfer, t, t.name());
@@ -672,15 +754,19 @@ impl App {
             ui.checkbox(&mut c.smooth, "Smooth");
             ui.checkbox(&mut c.flat, "Flat");
             ui.label("Interior");
-            ui.color_edit_button_srgb(&mut c.interior);
+            let r = ui.color_edit_button_srgb(&mut c.interior);
+            spot(ui, &r, Spot::InteriorColour, light);
         });
         let mut slopes_on = c.slopes.is_some();
         ui.checkbox(&mut slopes_on, "Slope shading");
         match (slopes_on, &mut c.slopes) {
             (true, Some(s)) => {
-                ui.add(Slider::new(&mut s.power, 1.0..=1000.0).logarithmic(true).text("power"));
-                ui.add(Slider::new(&mut s.ratio, 0.0..=100.0).text("ratio %"));
-                ui.add(Slider::new(&mut s.angle_deg, -180.0..=180.0).text("angle"));
+                let r = ui.add(Slider::new(&mut s.power, 1.0..=1000.0).logarithmic(true).text("power"));
+                spot(ui, &r, Spot::SlopePower, light);
+                let r = ui.add(Slider::new(&mut s.ratio, 0.0..=100.0).text("ratio %"));
+                spot(ui, &r, Spot::SlopeRatio, light);
+                let r = ui.add(Slider::new(&mut s.angle_deg, -180.0..=180.0).text("angle"));
+                spot(ui, &r, Spot::SlopeAngle, light);
             }
             (true, None) => c.slopes = Some(Slopes::default()),
             (false, _) => c.slopes = None,
@@ -704,7 +790,7 @@ impl App {
             .checkbox(&mut region, "Render only a region")
             .on_hover_text("Render a small centred part of the view, for slow deep locations; pixels keep their size")
             .changed();
-        ui.add_enabled_ui(region, |ui| {
+        let r = ui.add_enabled_ui(region, |ui| {
             ui.horizontal(|ui| {
                 let [w, h] = &mut self.region_size;
                 changed |= ui.add(DragValue::new(w).range(16..=16384)).changed();
@@ -713,20 +799,22 @@ impl App {
                 ui.label("pixels");
             });
         });
+        spot(ui, &r.response, Spot::RegionSize, &mut self.spotlight);
         if changed {
             self.region = region.then_some(self.region_size);
             self.region_changed = true;
         }
         ui.checkbox(&mut self.settings.bla, "Bilinear approximation (BLA)");
         let mut bits = (-self.settings.bla_epsilon.log2()).round() as u32;
-        if ui
+        let r = ui
             .add(Slider::new(&mut bits, 16..=53).text("BLA precision bits"))
-            .on_hover_text("Tolerance 2^-bits per skipped step; lower is faster but riskier")
-            .changed()
-        {
+            .on_hover_text("Tolerance 2^-bits per skipped step; lower is faster but riskier");
+        if r.changed() {
             self.settings.bla_epsilon = 0.5f64.powi(bits as i32);
         }
-        ui.add(Slider::new(&mut self.settings.bailout, 2.0..=1e6).logarithmic(true).text("bailout"));
+        spot(ui, &r, Spot::BlaBits, &mut self.spotlight);
+        let r = ui.add(Slider::new(&mut self.settings.bailout, 2.0..=1e6).logarithmic(true).text("bailout"));
+        spot(ui, &r, Spot::Bailout, &mut self.spotlight);
         ui.checkbox(&mut self.settings.simd, "SIMD (AVX2)")
             .on_hover_text("Iterate four pixels at once where it pays; the image is identical either way");
         ui.checkbox(&mut self.settings.interior_detection, "Interior detection")
@@ -740,9 +828,10 @@ impl App {
     }
 
     fn remote_ui(&mut self, ui: &mut egui::Ui) {
+        let light = &mut self.spotlight;
         egui::Grid::new("remote").num_columns(2).show(ui, |ui| {
             ui.label("Server");
-            ui.add(
+            let r = ui.add(
                 TextEdit::singleline(&mut self.remote_url)
                     .hint_text("wss://fracst-gateway.you.workers.dev/stream")
                     .desired_width(230.0),
@@ -750,14 +839,16 @@ impl App {
             .on_hover_text(
                 "A fracst gateway's /stream address, a Modal or fal.ai deployment's address, or ws://host:7878 for a fracst-server",
             );
+            spot(ui, &r, Spot::RemoteServer, light);
             ui.end_row();
             ui.label("Key");
-            ui.add(
+            let r = ui.add(
                 TextEdit::singleline(&mut self.remote_key)
                     .password(true)
                     .hint_text("fracst key (fst_…), Modal or fal token")
                     .desired_width(230.0),
             );
+            spot(ui, &r, Spot::RemoteKey, light);
             ui.end_row();
         });
         let active = matches!(
@@ -770,9 +861,7 @@ impl App {
                 self.connect_remote();
             }
             if active && ui.button("Disconnect").clicked() {
-                self.remote_generation = self.worker.disconnect_remote();
-                self.remote_status = RemoteStatus::Off;
-                self.requested = None;
+                self.disconnect_remote();
             }
         });
         match &self.remote_status {
@@ -802,16 +891,19 @@ impl App {
     }
 
     fn export_ui(&mut self, ui: &mut egui::Ui) {
+        let light = &mut self.spotlight;
         egui::Grid::new("export").num_columns(2).show(ui, |ui| {
             ui.label("Size");
-            ui.horizontal(|ui| {
+            let r = ui.horizontal(|ui| {
                 ui.add(DragValue::new(&mut self.export_size[0]).range(16..=32768));
                 ui.label("×");
                 ui.add(DragValue::new(&mut self.export_size[1]).range(16..=32768));
             });
+            spot(ui, &r.response, Spot::ExportSize, light);
             ui.end_row();
             ui.label("Supersample");
-            ui.add(DragValue::new(&mut self.export_supersample).range(1..=4).suffix("×"));
+            let r = ui.add(DragValue::new(&mut self.export_supersample).range(1..=4).suffix("×"));
+            spot(ui, &r, Spot::Supersample, light);
             ui.end_row();
         });
         ui.horizontal(|ui| {
@@ -850,7 +942,7 @@ impl App {
         let f = &shown.frame;
         let st = &f.stats;
         let px = (f.width as f64 * f.height as f64).max(1.0);
-        egui::Grid::new("stats").num_columns(2).striped(true).show(ui, |ui| {
+        let grid = egui::Grid::new("stats").num_columns(2).striped(true).show(ui, |ui| {
             let mut row = |k: &str, v: String| {
                 ui.label(k);
                 ui.label(v);
@@ -907,6 +999,7 @@ impl App {
                 row("Reached limit", format!("{:.2}%", 100.0 * st.undecided as f64 / px));
             }
         });
+        spot(ui, &grid.response, Spot::Statistics, &mut self.spotlight);
     }
 
     // ---- menus, windows, status ------------------------------------------------
@@ -933,35 +1026,41 @@ impl App {
                         ui.add(egui::Button::new(text).frame_when_inactive(false)).on_hover_text(hint).clicked()
                     };
                     if tool(ui, "Open", "Open a location or video project  (Ctrl+O)") {
-                        self.open_dialog();
+                        self.run(ctx, Cmd::Open);
                     }
                     if tool(ui, "Save", "Save the location  (Ctrl+S)") {
-                        self.save_dialog();
+                        self.run(ctx, Cmd::Save);
                     }
-                    if tool(ui, "Export", "Export a PNG  (Ctrl+E)") && self.blocking.is_none() {
-                        self.export_dialog();
+                    if tool(ui, "Export", "Export a PNG  (Ctrl+E)") {
+                        self.run(ctx, Cmd::Export);
                     }
                     let video = egui::Button::new("Video").frame_when_inactive(false);
                     egui::containers::menu::MenuButton::from_button(video).ui(ui, |ui| {
                         if ui.button("Make video…").clicked() {
-                            self.make_video();
+                            self.run(ctx, Cmd::MakeVideo);
                         }
-                        if ui.button("Open video project…").clicked()
-                            && let Some(dir) = rfd::FileDialog::new().set_title("Video project folder").pick_folder()
-                        {
-                            self.open_video_project(&dir);
+                        if ui.button("Open video project…").clicked() {
+                            self.run(ctx, Cmd::OpenVideoProject);
                         }
                     });
+                    let search = egui::Button::new(
+                        RichText::new(format!("Search  {}", if cfg!(target_os = "macos") { "⌘K" } else { "Ctrl K" }))
+                            .color(theme::TEXT_WEAK),
+                    )
+                    .frame_when_inactive(false);
+                    if ui.add(search).on_hover_text("Everything fracst can do").clicked() {
+                        self.search.toggle();
+                    }
                     let panel = if self.prefs.panel { "Hide settings  (Tab)" } else { "Show settings  (Tab)" };
                     if ui
                         .add(egui::Button::new("⚙").frame_when_inactive(false).selected(self.prefs.panel))
                         .on_hover_text(panel)
                         .clicked()
                     {
-                        self.toggle_panel();
+                        self.run(ctx, Cmd::TogglePanel);
                     }
                     if tool(ui, "?", "Controls") {
-                        self.show_help = true;
+                        self.run(ctx, Cmd::Controls);
                     }
                     if let Some(release) = self.update_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
                         self.update = Some(release);
@@ -1045,10 +1144,7 @@ impl App {
                             if ui.small_button("Cancel").on_hover_text("Esc").clicked()
                                 || ui.input(|i| i.key_pressed(Key::Escape))
                             {
-                                self.worker.cancel();
-                                self.blocking = None;
-                                // Do not immediately resubmit the cancelled render.
-                                self.requested = Some((self.view.clone(), self.settings.clone()));
+                                self.cancel_render();
                             }
                             ui.ctx().request_repaint_after(Duration::from_millis(100));
                         } else {
@@ -1098,6 +1194,7 @@ impl App {
             ui.label("Drag — pan");
             ui.label("Esc — cancel the current render");
             ui.label("Tab — show or hide the settings");
+            ui.label("Ctrl+K — search everything fracst can do");
             ui.label("Ctrl+O / Ctrl+S / Ctrl+E — open, save location, export PNG");
         });
     }
@@ -1158,23 +1255,24 @@ impl App {
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
+        self.search.take_keys(ctx);
         let (open, save, export) = ctx.input(|i| {
             let cmd = i.modifiers.command;
             (cmd && i.key_pressed(Key::O), cmd && i.key_pressed(Key::S), cmd && i.key_pressed(Key::E))
         });
         if open {
-            self.open_dialog();
+            self.run(ctx, Cmd::Open);
         }
         if save {
-            self.save_dialog();
+            self.run(ctx, Cmd::Save);
         }
-        if export && self.blocking.is_none() {
-            self.export_dialog();
+        if export {
+            self.run(ctx, Cmd::Export);
         }
         // Tab moves between text fields while one is focused; otherwise it
         // shows and hides the settings.
         if ctx.memory(|m| m.focused().is_none()) && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab)) {
-            self.toggle_panel();
+            self.run(ctx, Cmd::TogglePanel);
         }
         let dropped: Vec<std::path::PathBuf> =
             ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
@@ -1215,9 +1313,15 @@ impl eframe::App for App {
         if self.show_help {
             self.help_window(&ctx);
         }
-        let remote = Some((self.remote_url.trim().to_string(), self.remote_key.trim().to_string()))
-            .filter(|(url, _)| !url.is_empty());
+        let remote = self.remote();
         self.video.ui(&ctx, remote, &self.colouring);
+        if self.search.open {
+            let entries = self.entries();
+            if let Some(entry) = self.search.show(&ctx, &entries, &self.prefs.recent_commands) {
+                self.prefs.used(&entry.key);
+                self.run(&ctx, entry.action);
+            }
+        }
         self.request_render();
         self.pause_idle_remote(&ctx);
         if self.recolour {
@@ -1225,7 +1329,8 @@ impl eframe::App for App {
         }
         let settled = self.worker.current().is_none()
             && self.shown.as_ref().is_some_and(|s| !s.preview)
-            && !matches!(self.remote_status, RemoteStatus::Connecting(_));
+            && !matches!(self.remote_status, RemoteStatus::Connecting(_))
+            && Instant::now() >= self.screenshot_hold;
         if settled
             && self.screenshot_to.is_some()
             && let Some(progress) = self.screenshot_glide.take()
@@ -1234,6 +1339,24 @@ impl eframe::App for App {
             self.glide_freeze = Some(progress);
             self.zoom_in_at(self.settings.width as f64 * 0.3, self.settings.height as f64 * 0.3);
             ctx.request_repaint();
+        } else if settled && self.screenshot_to.is_some() && !self.screenshot_run.is_empty() {
+            // Run palette entries, as if chosen there.
+            let entries = self.entries();
+            for key in std::mem::take(&mut self.screenshot_run) {
+                match entries.iter().find(|e| e.key == key) {
+                    Some(e) => self.run(&ctx, e.action.clone()),
+                    None => eprintln!("FRACST_SCREENSHOT_RUN: no entry {key}"),
+                }
+            }
+            self.screenshot_hold = Instant::now() + Duration::from_millis(600);
+            ctx.request_repaint();
+        } else if settled
+            && self.screenshot_to.is_some()
+            && let Some(query) = self.screenshot_search.take()
+        {
+            self.search.open_with(&query);
+            self.screenshot_hold = Instant::now() + Duration::from_millis(300);
+            ctx.request_repaint();
         } else if settled && let Some(path) = self.screenshot_to.take() {
             ctx.request_screenshot(move |img| {
                 let rgba: Vec<u8> = img.pixels.iter().flat_map(|c| c.to_array()).collect();
@@ -1241,6 +1364,9 @@ impl eframe::App for App {
                 std::process::exit(0);
             });
             self.screenshot_frames = 60;
+        }
+        if self.screenshot_to.is_some() && Instant::now() < self.screenshot_hold {
+            ctx.request_repaint();
         }
         if self.screenshot_frames > 0 {
             // The capture happens on a later frame; keep frames coming until it does.

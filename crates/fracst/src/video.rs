@@ -18,6 +18,18 @@ use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Instant;
 
+/// What the video window can do, for the command palette.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum VideoCmd {
+    RenderKeyframes,
+    Estimate,
+    Encode,
+    OpenFolder,
+    Pause,
+    Cancel,
+    Close,
+}
+
 /// Longest side of the preview image.
 const PREVIEW_SIZE: u32 = 480;
 
@@ -184,6 +196,70 @@ impl VideoPanel {
         self.preview_t = 0.0;
         self.generation += 1;
         self.status.clear();
+    }
+
+    /// What can be done right now, with titles, while the window is open.
+    pub fn commands(&self) -> Vec<(VideoCmd, &'static str)> {
+        if !self.open || self.location.is_none() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        if let Some(job) = &self.job {
+            if matches!(job.kind, JobKind::Keyframes) {
+                out.push((VideoCmd::Pause, "Pause rendering keyframes"));
+            }
+            out.push((VideoCmd::Cancel, "Cancel the video job"));
+        } else {
+            let (done, count) = self.project.as_ref().map_or((0, 0), |p| (p.keyframes_done(), p.plan().count));
+            if count == 0 || done < count {
+                out.push((
+                    VideoCmd::RenderKeyframes,
+                    if done > 0 { "Resume rendering keyframes" } else { "Render keyframes" },
+                ));
+                out.push((VideoCmd::Estimate, "Estimate the video's render time"));
+            } else {
+                out.push((VideoCmd::Encode, "Encode the video"));
+            }
+            if self.project.is_some() {
+                out.push((VideoCmd::OpenFolder, "Open the video project's folder"));
+            }
+        }
+        out.push((VideoCmd::Close, "Close the video window"));
+        out
+    }
+
+    pub fn run(&mut self, cmd: VideoCmd, remote: Option<(String, String)>) {
+        match cmd {
+            VideoCmd::RenderKeyframes => self.render_keyframes(remote, None),
+            VideoCmd::Estimate => self.render_keyframes(remote, Some(1)),
+            VideoCmd::Encode => self.start_encode(),
+            VideoCmd::OpenFolder => {
+                if let Some(p) = &self.project {
+                    open_in_file_manager(&p.dir);
+                }
+            }
+            VideoCmd::Pause => {
+                if let Some(job) = &self.job {
+                    job.control.pause();
+                }
+            }
+            VideoCmd::Cancel => self.cancel_job(),
+            VideoCmd::Close => self.open = false,
+        }
+    }
+
+    fn start_encode(&mut self) {
+        match ffmpeg::find() {
+            Some(ff) => self.encode(Some(ff)),
+            None => self.ask_ffmpeg = true,
+        }
+    }
+
+    fn cancel_job(&mut self) {
+        if let Some(job) = &self.job {
+            job.control.cancel();
+            job.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 
     fn keyframes_locked(&self) -> bool {
@@ -678,6 +754,7 @@ impl VideoPanel {
             self.remote = false;
         }
 
+        let mut cancel = false;
         if let Some(job) = &self.job {
             let (done, total) = job.progress;
             let (label, frac) = match job.kind {
@@ -702,8 +779,7 @@ impl VideoPanel {
                     job.control.pause();
                 }
                 if ui.button("Cancel").clicked() {
-                    job.control.cancel();
-                    job.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                    cancel = true;
                 }
             });
         } else {
@@ -724,10 +800,7 @@ impl VideoPanel {
                     }
                 }
                 if ui.add_enabled(all, egui::Button::new("Encode video")).clicked() {
-                    match ffmpeg::find() {
-                        Some(ff) => self.encode(Some(ff)),
-                        None => self.ask_ffmpeg = true,
-                    }
+                    self.start_encode();
                 }
                 if let Some(p) = &self.project
                     && ui.small_button("Open folder").clicked()
@@ -735,6 +808,9 @@ impl VideoPanel {
                     open_in_file_manager(&p.dir);
                 }
             });
+        }
+        if cancel {
+            self.cancel_job();
         }
         if self.ask_ffmpeg && !self.busy() {
             egui::Frame::group(ui.style()).show(ui, |ui| {

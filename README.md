@@ -156,6 +156,7 @@ cargo run --release -p fracst [location.kfr | image.png]
 | Drag | Pan |
 | Esc | Cancel the current render |
 | Tab | Show or hide the settings |
+| Ctrl+K | Search everything the app does: actions, every setting, video commands |
 | Ctrl+O / Ctrl+S / Ctrl+E | Open location, save `.kfr`, export PNG |
 | Drop a file | Open a `.kfr` or PNG with an embedded location |
 
@@ -172,6 +173,12 @@ The settings card on the right covers:
 - **Remote GPU**: render on a `fracst-server`, such as a cloud GPU (see below).
 - **Statistics**: per-stage timings, BLA skip factor and iteration range.
 - **App**: the startup update check, and the controls.
+
+**Ctrl+K** (or **Search** in the toolbar) lists everything fracst can do.
+Type a few letters of a name: actions run at once, switches and choices such
+as palettes, transfer functions or the click zoom change right there, and
+anything with a value opens its place in the settings and highlights it.
+Entries used lately come first.
 
 Zooms glide into place (**Navigation → Zoom animation**: Quick, Smooth, Slow
 or Off), and jumps such as opening a file or finding a minibrot cross-fade.
