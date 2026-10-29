@@ -61,7 +61,7 @@ pub fn window_radius(ctx: &egui::Context) -> f32 {
     if PAINT_CORNERS && !maximized(ctx) { theme::RADIUS as f32 } else { 0.0 }
 }
 
-fn toggle_maximized(ctx: &egui::Context) {
+pub fn toggle_maximized(ctx: &egui::Context) {
     ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized(ctx)));
 }
 
@@ -80,7 +80,7 @@ pub fn drag_window(ctx: &egui::Context, response: &egui::Response) {
 pub fn frame_controls(ui: &mut egui::Ui, window: Rect, canvas: Rect) {
     let ctx = ui.ctx().clone();
     let strip = Rect::from_min_max(window.min, Pos2::new(window.max.x, canvas.top() + 10.0));
-    let response = ui.interact(strip, Id::unique("title-strip"), Sense::click_and_drag());
+    let response = ui.interact(strip, Id::unique("title-strip"), Sense::CLICK | Sense::DRAG);
     drag_window(&ctx, &response);
     if NATIVE_BUTTONS || maximized(&ctx) {
         return;
@@ -101,7 +101,7 @@ pub fn frame_controls(ui: &mut egui::Ui, window: Rect, canvas: Rect) {
     ];
     for (dir, rect) in bands {
         let id = Id::unique(("resize", format!("{dir:?}")));
-        let response = ui.interact(rect, id, Sense::drag());
+        let response = ui.interact(rect, id, Sense::DRAG);
         let cursor = match dir {
             North | South => CursorIcon::ResizeVertical,
             East | West => CursorIcon::ResizeHorizontal,

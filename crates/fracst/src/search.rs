@@ -41,7 +41,6 @@ pub struct Search {
 }
 
 const WIDTH: f32 = 580.0;
-const SHOWN: usize = 60;
 
 impl Search {
     pub fn toggle(&mut self) {
@@ -89,7 +88,7 @@ impl Search {
             .order(Order::Foreground)
             .fixed_pos(screen.min)
             .show(ctx, |ui| {
-                let (rect, response) = ui.allocate_exact_size(screen.size(), Sense::click_and_drag());
+                let (rect, response) = ui.allocate_exact_size(screen.size(), Sense::CLICK | Sense::DRAG);
                 ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha(90));
                 response
             })
@@ -143,7 +142,7 @@ impl Search {
                     let max_height = (screen.height() * 0.55).min(420.0);
                     egui::ScrollArea::vertical().max_height(max_height).auto_shrink([false, true]).show(ui, |ui| {
                         let mut last_group = None;
-                        for (row, &(i, recent)) in results.iter().take(SHOWN).enumerate() {
+                        for (row, &(i, recent)) in results.iter().enumerate() {
                             let group = if recent { "Recent" } else { entries[i].group };
                             if self.query.is_empty() && last_group != Some(group) {
                                 ui.add_space(if last_group.is_some() { 6.0 } else { 2.0 });

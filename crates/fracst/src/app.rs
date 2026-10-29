@@ -410,7 +410,8 @@ impl App {
         }
         // Changes made elsewhere since the last frame.
         self.sync_display();
-        let response = ui.allocate_rect(rect, Sense::click_and_drag());
+        // Not focusable, so Tab never lands here.
+        let response = ui.allocate_rect(rect, Sense::CLICK | Sense::DRAG);
 
         // Pointer positions in the target view's pixels: what is under the
         // pointer is what is displayed there, even mid-glide.
@@ -466,7 +467,11 @@ impl App {
         let length = self.glide_length().as_secs_f64().max(1e-3);
         if let Some(fade) = &mut self.fade {
             // The old frame stays until the new one arrives, then fades out.
-            if fade.start.is_none() && self.texture.is_some() {
+            let arrived = self.shown.as_ref().is_some_and(|s| same_place(&s.view, &self.view));
+            // Or nothing more is coming: its render was asked for, and is done or cancelled.
+            let settled =
+                self.worker.current().is_none() && self.requested.as_ref().is_some_and(|(v, _)| *v == self.view);
+            if fade.start.is_none() && (arrived || settled) {
                 fade.start = Some(Instant::now());
             }
             let progress = |start: Instant| self.glide_freeze.unwrap_or(start.elapsed().as_secs_f64() / length);
@@ -533,9 +538,13 @@ impl App {
         if std::mem::take(&mut self.jump) {
             self.glide = None;
             self.animate = false;
-            if gliding && let (Some(texture), Some(rect)) = (self.texture.take(), self.placed) {
-                // Hold the old frame, not a recolouring of it, until the new one is ready.
-                self.shown = None;
+            let older = self.shown.as_ref().is_some_and(|s| !same_place(&s.view, &self.view));
+            if gliding
+                && older
+                && let Some(rect) = self.placed
+                && let Some(texture) = self.texture.take()
+            {
+                // Hold the old frame as it was until the new one is ready.
                 self.fade = Some(Fade { texture, rect, start: None });
             }
         } else if std::mem::take(&mut self.animate) && gliding {
@@ -1022,7 +1031,7 @@ impl App {
                             ui.label(RichText::new("fracst").font(theme::strong(14.5)).color(theme::TEXT));
                         })
                         .response
-                        .interact(Sense::click_and_drag());
+                        .interact(Sense::CLICK | Sense::DRAG);
                     window::drag_window(ctx, &mark);
                     ui.add_space(6.0);
                     let tool = |ui: &mut egui::Ui, text: &str, hint: &str| {
@@ -1278,7 +1287,9 @@ impl App {
         }
         // Tab moves between text fields while one is focused; otherwise it
         // shows and hides the settings.
-        if ctx.memory(|m| m.focused().is_none()) && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab)) {
+        if !ctx.text_edit_focused() && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab)) {
+            // egui would also move the keyboard focus on.
+            ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
             self.run(ctx, Cmd::TogglePanel);
         }
         let dropped: Vec<std::path::PathBuf> =
@@ -1335,6 +1346,9 @@ impl eframe::App for App {
                 self.run(&ctx, entry.action);
             }
         }
+        // Changes made after the canvas this frame (Go, the palette, …) glide
+        // or fade from what is on screen now, before their render starts.
+        self.sync_display();
         self.request_render();
         self.pause_idle_remote(&ctx);
         if self.recolour {
@@ -1401,6 +1415,11 @@ fn paint_rounded(painter: &egui::Painter, clip: Rect, target: Rect, texture: Tex
     painter.add(RectShape::filled(visible, theme::RADIUS, tint).with_texture(texture, uv));
 }
 
+/// Whether two views show the same place, whatever their iteration limits.
+fn same_place(a: &View, b: &View) -> bool {
+    View { maxiter: b.maxiter, ..a.clone() } == *b
+}
+
 /// A position on the canvas in its pixels, from the top left.
 fn canvas_pixels(p: Pos2, rect: Rect, px_per_point: f32) -> (f64, f64) {
     (((p.x - rect.min.x) * px_per_point) as f64, ((p.y - rect.min.y) * px_per_point) as f64)
@@ -1420,7 +1439,10 @@ fn centre_offset(of: &View, from: &View, height: u32) -> [f64; 2] {
 fn wheel_points(input: &egui::InputState) -> f32 {
     let mut points = 0.0;
     for event in &input.raw.events {
-        if let egui::Event::MouseWheel { unit, delta, .. } = event {
+        if let egui::Event::MouseWheel { unit, delta, modifiers, .. } = event
+            && !modifiers.shift
+            && !modifiers.command
+        {
             points += match unit {
                 egui::MouseWheelUnit::Point => delta.y,
                 egui::MouseWheelUnit::Line => 40.0 * delta.y,
