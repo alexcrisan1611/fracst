@@ -11,6 +11,6 @@ On Linux, fracst needs Vulkan or OpenGL drivers (Mesa is fine) and X11 or Waylan
 
 Open a location by passing a `.kfr` file or a PNG with an embedded location: `fracst location.kfr`. Run `fracst-cli --help` for batch rendering.
 
-To make a zoom video into a location, choose **File → Make video…** in the app, or run `fracst-cli video location.kfr -o zoom.mp4`. Encoding uses ffmpeg, which fracst offers to download if it isn't installed; see [docs/video.md](https://github.com/alexcrisan1611/fracst/blob/main/docs/video.md).
+To make a zoom video into a location, choose **Video → Make video…** in the app's toolbar (or press Ctrl+K and type "video"), or run `fracst-cli video location.kfr -o zoom.mp4`. Encoding uses ffmpeg, which fracst offers to download if it isn't installed; see [docs/video.md](https://github.com/alexcrisan1611/fracst/blob/main/docs/video.md).
 
 To render on a cloud GPU, open **Remote GPU** in the app and connect to a fracst gateway or server with your key; see [docs/remote.md](https://github.com/alexcrisan1611/fracst/blob/main/docs/remote.md).
