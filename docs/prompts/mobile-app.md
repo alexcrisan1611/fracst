@@ -2,9 +2,9 @@
 
 You are working in the fracst repository (Rust, Cargo workspace), on Windows 11.
 fracst is a deep-zoom Mandelbrot explorer. It already renders on a cloud GPU:
-a CUDA engine runs inside `fracst-server` on fal.ai, and a Cloudflare Worker
-(`gateway/`) lets people connect with their own revocable fracst keys
-(`fst_…`), keeping the fal key secret.
+a CUDA engine runs inside `fracst-server` on Modal or fal.ai, and a
+Cloudflare Worker (`gateway/`) lets people connect with their own revocable
+fracst keys (`fst_…`), keeping the Modal or fal token secret.
 
 Build a mobile app with Expo and TypeScript that explores the Mandelbrot set
 through that gateway. The phone does no fractal maths beyond exact view
@@ -27,7 +27,7 @@ protocol, the gateway and how everything is tested.
 - **Plan, then build in phases.** Plan before coding. After each phase,
   verify it (tests, type checks, a real run) before moving on. At the end,
   report what you verified and what you could not (for example iOS without a
-  Mac, or the real fal deployment). Don't claim anything you didn't run.
+  Mac, or the real Modal or fal deployment). Don't claim anything you didn't run.
 - **Use current APIs.** Expo moves fast. Use `npx expo install <pkg>` for
   every Expo-ecosystem package, so versions match the SDK. Check
   `npx expo install --check` and `npx expo-doctor@latest`. Check current
@@ -42,7 +42,7 @@ protocol, the gateway and how everything is tested.
   (`adb exec-out screencap -p`, `xcrun simctl io booted screenshot`), or the
   browser page for web. Never capture the host desktop. The desktop app has
   its own hook (`FRACST_SCREENSHOT=path`).
-- **Money.** Connecting to the real gateway or fal app starts a paid GPU.
+- **Money.** Connecting to the real gateway, Modal or fal app starts a paid GPU.
   Develop against the local stack below, and ask before touching anything
   deployed.
 - **Style.** Match the existing code. Rust: rustfmt with `rustfmt.toml`,
@@ -60,16 +60,19 @@ protocol, the gateway and how everything is tested.
 | `crates/fracst-server` | WebSocket server (`lib.rs`) and its end-to-end tests (`tests/end_to_end.rs`) |
 | `crates/fracst` | Desktop app (egui). `worker.rs` shows the render, preview and remote logic to mirror. `app.rs` shows auto-iteration handling (start the next frame from `stats.suggested_maxiter`) |
 | `gateway/` | Cloudflare Worker: `src/index.ts` (routes, key checks, admin), `src/session.ts` (per-connection Durable Object relaying to the GPU), `src/registry.ts` (keys, usage, limits), `scripts/keys.mjs`, `test/smoke.mjs` |
-| `deploy/fal/` | fal app and Dockerfile for the GPU server |
+| `deploy/modal/`, `deploy/fal/` | The Modal and fal apps, and the Dockerfile for the GPU server |
 
 **Protocol today.** JSON text messages over a WebSocket, tagged by `"type"`
 in snake_case.
 
 - **Client → server:**
-  - `render {id, view, settings}`. A newer render cancels the one in flight.
+  - `render {id, view, settings, queue?}`. A newer render cancels the one in
+    flight, unless it is sent with `"queue": true` to a server that lists the
+    `queue` feature: then it waits its turn and frames come back in order.
   - `cancel {id}`.
 - **Server → client:**
-  - `hello {protocol, version, engine}`. A gateway may send `status {message}`
+  - `hello {protocol, version, engine, features}`, where `features` (possibly
+    absent) lists optional abilities such as `queue`. A gateway may send `status {message}`
     first, while a GPU starts.
   - `keepalive` every 30 s. Ignore it.
   - `progress {id, stage, fraction}`.
@@ -143,8 +146,8 @@ this as an optional extension, so existing clients keep working.
    and the view and settings that made it. If a request's view and settings
    equal the cached ones and only `image` differs, skip rendering: recolour
    and encode. This makes palette editing on the phone feel local.
-5. **Capabilities.** `hello` gains `"features": ["image", "recolour"]`
-   (`#[serde(default)]`). The app refuses servers without `image`. Keep
+5. **Capabilities.** `hello`'s `features` gains `"image"` and `"recolour"`
+   (next to `"queue"`). The app refuses servers without `image`. Keep
    `PROTOCOL = 1`, since the change is additive.
 6. **Subprotocols.** If a client offers the subprotocol `fracst.v1`, select
    it in the handshake response. Also accept the server token as a

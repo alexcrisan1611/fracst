@@ -1,7 +1,8 @@
 # Performance experiments
 
-This is a log of the speed hypotheses tried on the pixel loop, how they were
-measured, and what was kept. Each hypothesis was developed on its own branch
+This is a log of the speed hypotheses tried on the CPU pixel loop, how they
+were measured, and what was kept. The CUDA engine (`fracst-cuda`) is a
+line-by-line port of the loop described here; see [remote.md](remote.md). Each hypothesis was developed on its own branch
 in its own git worktree, then measured against the same baseline.
 
 ## Method

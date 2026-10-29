@@ -3,8 +3,18 @@
 A zoom video in fracst starts at the whole set and ends at a location. It is
 made in two stages. **Keyframes** are rendered once, which is slow. They are
 then **composited and encoded** into the video, which is fast and can be
-repeated with other colours, timing or music. Both the app (**Make video…**)
-and `fracst-cli video` do this, with the same code (`crates/fracst-video`).
+repeated with other colours, timing or music. Both the app and
+`fracst-cli video` do this, with the same code (`crates/fracst-video`).
+
+![The Video window for a new project](../assets/screenshots/video.jpg)
+
+In the app, **Video → Make video…** in the toolbar (also under **Export**,
+or Ctrl+K and "video") opens the Video window for the location on screen.
+The project folder is chosen when rendering starts. **Video → Open video
+project…**, **Open** (Ctrl+O) or dropping the folder on the window reopens a
+project, and the last ones used are in the Ctrl+K palette. Rendering and
+encoding run in the background while you keep exploring, and the window's
+commands (render, pause, estimate, encode) are in the palette too.
 
 ## Keyframes
 
@@ -83,8 +93,10 @@ alike. Shading each layer at its own scale showed as visible rectangles.
 | Good | 1.5× | 2×2 | Up to 1.33× |
 | Best | 2× | 3×3 | Never magnified |
 
-The keyframe size and zoom factor are fixed once a keyframe is rendered.
-Start a new project to change them.
+The keyframe size and zoom factor are fixed once a keyframe is rendered, so
+the app greys out the video size and quality then. Start a new project to
+change them. The app's size presets are 720p, 1080p, 1440p, 4K, Square 1080
+and Vertical 1080.
 
 ## Timing
 
@@ -108,7 +120,8 @@ offset, transfer function, slopes). On top of that:
   `IterDiv`, and slope power, ratio and angle. Each field is eased
   separately between the keys that set it. `IterDiv` changes by ratio, so it
   moves evenly across orders of magnitude. In the app, **Add key from current
-  colours** takes the explorer's colours at the preview's time.
+  colours** takes the explorer's colours at the preview's time, and a key's
+  **Set to current** replaces its colours with the explorer's.
 
 Opening a project in the app moves the explorer to its location, so its
 colours can be tuned there.

@@ -5,7 +5,12 @@
 A fast deep-zoom Mandelbrot set explorer written in modern Rust, with
 automatic iteration limits and minibrot-aware references.
 
-- Zoom to 10^1000 and beyond, interactively.
+- Zoom to 10^1000 and beyond, interactively. Zooms glide into place, and
+  frames render in the background while the last one stays on screen.
+- A dark, frameless window where the image fills the screen, with a floating
+  toolbar and a settings card you can hide with Tab.
+- **Ctrl+K** searches everything the app does: actions, every setting,
+  recent locations and video projects.
 - Opens and saves `.kfr` location files, and embeds the location in saved
   PNGs so images can be reopened.
 - Palette colouring: 1024-entry palettes interpolated from key colours,
@@ -14,9 +19,19 @@ automatic iteration limits and minibrot-aware references.
 - Zoom videos from the app or the CLI: keyframes rendered here or on a remote
   GPU (resumable), smooth interpolation, a speed curve, animated colours and
   audio, encoded with ffmpeg (which fracst can download for you).
+- Rendering on a remote NVIDIA GPU (`fracst-server`, with a CUDA engine that
+  gives bit-identical frames), self-hosted or on Modal or fal.ai, and
+  shareable through a gateway with per-person keys.
 - CLI for batch renders and supersampling.
 
-![fracst exploring a spiral at zoom 2.2e238](assets/screenshot.png)
+![fracst exploring a spiral at zoom 2.2e238, with the settings card open](assets/screenshot.png)
+
+| | |
+|---|---|
+| ![A minibrot at zoom 1.5e400, with the settings card hidden](assets/screenshots/deep-minibrot.jpg) | ![The same minibrot with its render statistics: 22.9% interior, 208× fewer steps than iterations](assets/screenshots/statistics.jpg) |
+| A minibrot at zoom 1.5e400, with the settings hidden (Tab). | Its statistics: a 4M iteration limit found automatically, the reference on the minibrot's nucleus, 208 iterations skipped per step. |
+| ![The Ctrl+K palette filtered to "palette"](assets/screenshots/search.jpg) | ![The Make video window](assets/screenshots/video.jpg) |
+| **Ctrl+K**: switches and choices change in place. | **Make video…**: a zoom video into the current location. |
 
 ## Download
 
@@ -103,25 +118,25 @@ reliable even for deep minibrots.
 ## Benchmarks
 
 1920×1080, AMD Ryzen 7 8845HS (8 cores / 16 threads), `cargo run --release
--p fracst-core --example bench -- --baseline`. Times are the first render
-including the reference orbit, and vary by about ±30% between runs on this
-laptop (boost clocks and thermals).
+-p fracst-core --example bench -- --baseline`, v0.4.1. Times are the first
+render including the reference orbit, best of two runs. They vary by about
+±30% between runs on this laptop (boost clocks and thermals).
 
 | Location | Zoom | Avg iterations | fracst | Plain perturbation | Speedup |
 |---|---|---:|---:|---:|---:|
 | Overview | 1 | 11 | 0.03 s | 0.05 s | 2× |
-| Seahorse minibrot | 3e8 | 3,243 | 1.6 s | 1.8 s | 1.1× |
-| Spiral | 2e238 | 2,186 | 0.12 s | 1.2 s | 10× |
-| Spiral | 8e397 | 4,025 | 0.23 s | 16.9 s | 73× |
-| Spiral | 1e998 | 11,764 | 0.29 s | 45.0 s | 156× |
-| Inside a minibrot (21% interior, 1M max iterations) | 2e400 | 20,830 | 0.65 s | not run | — |
+| Seahorse minibrot | 3e8 | 3,243 | 1.7 s | 1.1 s | 0.65× |
+| Spiral | 2e238 | 2,186 | 0.08 s | 0.76 s | 10× |
+| Spiral | 8e397 | 4,025 | 0.14 s | 10.4 s | 75× |
+| Spiral | 1e998 | 11,764 | 0.19 s | 30.3 s | 160× |
+| Inside a minibrot (21% interior, 1M max iterations) | 2e400 | 20,830 | 0.40 s | not run | — |
 
 "Plain perturbation" is the same engine with BLA and interior detection
 turned off (one reference with rebasing, still with SIMD and FMA). It shows
 what the iteration skipping buys, and is not a comparison with another
-program. At shallow
-zooms such as the seahorse row, BLA cannot skip anything and fracst runs at
-plain perturbation speed.
+program. At shallow zooms such as the seahorse row, BLA cannot skip
+anything (3,242 steps for 3,243 iterations), so the BLA lookups and interior
+checks are pure overhead, and fracst is slower than plain perturbation there.
 
 `--export` writes every benchmark location to `bench-locations/*.kfr`, so
 you can render the same views again with other settings or later versions.
@@ -157,22 +172,37 @@ cargo run --release -p fracst [location.kfr | image.png]
 | Esc | Cancel the current render |
 | Tab | Show or hide the settings |
 | Ctrl+K | Search everything the app does: actions, every setting, video commands |
-| Ctrl+O / Ctrl+S / Ctrl+E | Open location, save `.kfr`, export PNG |
-| Drop a file | Open a `.kfr` or PNG with an embedded location |
+| Ctrl+O / Ctrl+S / Ctrl+E | Open a location or video project, save `.kfr`, export PNG |
+| Drop a file | Open a `.kfr`, a PNG with an embedded location, or a video project folder |
 
-The settings card on the right covers:
+On a Mac, use Cmd instead of Ctrl.
 
-- **Location**: arbitrary-precision coordinates, plus copy and paste as `.kfr` text.
-- **Find minibrot**: Newton's method.
-- **Auto iterations**.
-- **Colouring**: palette presets, a random palette, editable key colours,
-  `IterDiv`, offset, transfer function, slopes and interior colour.
-- **Rendering**: resolution scale, BLA, interior detection, reference snapping,
-  bailout and reference reuse.
-- **Export**: any size with supersampling, and **Make video…** (see below).
+The image fills the window. A floating toolbar at the top left holds
+**Open**, **Save**, **Export**, the **Video** menu, **Search**, the settings
+switch (⚙, or Tab) and the controls (**?**). Drag the wordmark to move the
+window. The bar at the bottom shows the zoom, the iteration limit, render
+progress and messages.
+
+The settings card on the right has these sections:
+
+- **Location**: arbitrary-precision coordinates, zoom and iteration limit,
+  **Go**, **Reset**, and **Copy** and **Paste…** as `.kfr` text.
+- **Navigation**: the click zoom (×2 to ×32), **Zoom out**, the zoom
+  animation, **Find minibrot** with how large to frame it, and **Auto
+  iterations**.
+- **Colour**: palette presets, a random palette, editable key colours,
+  `IterDiv`, offset, transfer function, smooth or flat colouring, interior
+  colour, and slope shading (power, ratio, angle).
+- **Rendering**: resolution scale, **Render only a region** (a small centred
+  part of the view, for slow deep locations), BLA and its precision, bailout,
+  SIMD, interior detection, reference snapping and reuse, and the direction
+  of the imaginary axis.
 - **Remote GPU**: render on a `fracst-server`, such as a cloud GPU (see below).
-- **Statistics**: per-stage timings, BLA skip factor and iteration range.
-- **App**: the startup update check, and the controls.
+- **Export**: a PNG of any size with supersampling, and **Make video…** (see below).
+- **Statistics**: the frame's timings by stage, the iteration limit and how
+  many passes it took, the nearby minibrot's period, the reference orbit,
+  precision, BLA skip factor, iteration range, and the share of interior pixels.
+- **App**: the startup update check, the controls, and the version.
 
 **Ctrl+K** (or **Search** in the toolbar) lists everything fracst can do.
 Type a few letters of a name: actions run at once, switches and choices such
@@ -184,7 +214,8 @@ and video projects used are there too.
 Zooms glide into place (**Navigation → Zoom animation**: Quick, Smooth, Slow
 or Off), and jumps such as opening a file or finding a minibrot cross-fade.
 While a frame renders, the previous one is shown stretched to the new view.
-Slow frames get a quarter-resolution preview first.
+While the mouse wheel turns, the image is only scaled, and the next frame
+starts once the wheel stops. Slow frames get a quarter-resolution preview first.
 
 ### Command line (`fracst-cli`)
 
@@ -206,8 +237,9 @@ fracst-cli deep.kfr --zoom-out 500 --zoom-out-factor 2 -o frames/zoom.png
 
 ### Zoom videos
 
-**Make video…** (under Export, or in the toolbar's Video menu) sets up a video from the
-whole set into the current location. fracst renders one *keyframe* per
+**Video → Make video…** in the toolbar (or under Export, or Ctrl+K) sets up a
+video from the whole set into the current location. **Video → Open video
+project…** reopens one, and opening it moves the explorer to its location. fracst renders one *keyframe* per
 doubling of the zoom, from the location outwards, here or on the remote GPU,
 in the background while you keep exploring. Each keyframe is saved to a
 project folder as soon as it is done, so a job can pause, crash or be cut off
@@ -283,14 +315,26 @@ Not supported yet:
 The icon is rendered by fracst itself:
 `cargo run --release -p fracst-core --example icon` regenerates `assets/icon.*`.
 
+The screenshots are taken by the app itself. With `FRACST_SCREENSHOT=out.png`
+it saves its own window once the render settles, then exits.
+`FRACST_SCREENSHOT_RUN` runs palette entries first, by key (for example
+`panel`, `make-video` or `focus:statistics`, separated by `;`), and
+`FRACST_SCREENSHOT_SEARCH` opens the palette with a query. Point `APPDATA`
+(Windows) or `XDG_CONFIG_HOME` (Linux) at an empty folder so saved settings,
+recent files and remote keys stay out of the picture.
+
 ## Project layout
 
 ```
 crates/fracst-core   engine: fixed.rs (bignum), floatexp.rs + num.rs (extended range),
-                     reference.rs, bla.rs, perturb.rs, render.rs, newton.rs,
-                     colour.rs, kfr.rs, image.rs
-crates/fracst-cli    command-line renderer
-crates/fracst        egui explorer (render thread in worker.rs)
+                     view.rs, reference.rs, bla.rs, perturb.rs, render.rs, newton.rs,
+                     colour.rs, kfr.rs, image.rs; examples bench, deepbench and icon
+crates/fracst-cli    command-line renderer, and fracst-cli video
+crates/fracst        egui explorer: app.rs (canvas, toolbar, settings card),
+                     app/commands.rs (every action, for the toolbar, keys and palette),
+                     search.rs (the Ctrl+K palette), glide.rs (zoom animation),
+                     theme.rs, window.rs (frameless window), video.rs (Make video),
+                     worker.rs (render thread), prefs.rs, remote_config.rs, update.rs
 crates/fracst-cuda   CUDA pixel engine: kernel/fracst.cuh (the pixel loop, also
                      compiled for the host in tests), NVRTC compilation, check.rs
 crates/fracst-remote remote protocol, lossless frame compression, client
@@ -299,6 +343,8 @@ crates/fracst-video  zoom videos: projects, keyframes, compositing, timeline, ff
 deploy/fal           container image for fracst-server, and the fal.ai app
 deploy/modal         the Modal app
 gateway              Cloudflare Worker: fracst keys, usage limits, relay to the GPU
+packaging            Windows installer (Inno Setup), Linux desktop entry and install.sh
+docs                 performance log, remote rendering, zoom videos
 ```
 
 ## Roadmap

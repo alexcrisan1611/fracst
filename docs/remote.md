@@ -37,6 +37,9 @@ without fal) on Modal, which exposes `fracst-server`'s WebSocket directly:
 wss://<workspace>--fracst.modal.run
 ```
 
+`modal deploy` prints the exact address; it may include a region, as in
+`wss://<workspace>--fracst.us-east.modal.run`.
+
 Modal checks a proxy auth token before anything starts, so nobody else can
 wake a GPU. Create one under Settings → Proxy Auth Tokens; it has an id
 (`wk-…`) and a secret (`ws-…`). In the app's **Key** field, give it as
@@ -100,8 +103,9 @@ from the Actions tab (it takes the machine types as an input), or push a
 
 ### Connect
 
-In the app, open **Remote GPU**, paste the stream address and your fal key,
-and press **Connect**. Rendering continues locally until the GPU is ready.
+In the app, open the **Remote GPU** section of the settings card (Tab shows
+the card), paste the stream address and your fal key, and press **Connect**
+(or Ctrl+K, "connect"). Rendering continues locally until the GPU is ready.
 A runner that was idle takes a minute or two to start. From then on, the
 panel shows which GPU renders, and **Statistics** shows each frame's round
 trip next to the server's own time. If the connection drops, the app goes
