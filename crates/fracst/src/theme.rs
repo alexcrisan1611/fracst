@@ -53,6 +53,8 @@ pub fn strong(size: f32) -> FontId {
 /// Set the theme once at startup; [`set_accent`] recolours it later.
 pub fn install(ctx: &egui::Context, accent: Color32) {
     install_fonts(ctx);
+    // Dark whatever the system's theme: the cards and pills are dark.
+    ctx.set_theme(egui::Theme::Dark);
     ctx.global_style_mut(|style| {
         use FontFamily::{Monospace, Proportional};
         style.text_styles = [

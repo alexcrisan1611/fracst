@@ -261,7 +261,11 @@ impl App {
         add(RandomPalette, "Random palette".into(), "Colour", "random-palette".into(), None);
         add(TogglePanel, "Show or hide settings".into(), "App", "panel".into(), Some("Tab".into()));
         add(Controls, "Controls and shortcuts".into(), "App", "controls".into(), None);
-        let connected = !matches!(self.remote_status, crate::worker::RemoteStatus::Off);
+        use crate::worker::RemoteStatus;
+        let connected = matches!(
+            self.remote_status,
+            RemoteStatus::Connecting(_) | RemoteStatus::Connected(_) | RemoteStatus::Paused
+        );
         if connected {
             add(Disconnect, "Disconnect the remote GPU".into(), "Remote GPU", "disconnect".into(), None);
         } else {
@@ -432,10 +436,7 @@ impl App {
             TogglePanel => self.toggle_panel(),
             Controls => self.show_help = true,
             Minimise => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
-            Maximise => {
-                let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-                ctx.send_viewport_cmd(ViewportCommand::Maximized(!max));
-            }
+            Maximise => crate::window::toggle_maximized(ctx),
             Video(cmd) => {
                 let remote = self.remote();
                 self.video.run(cmd, remote);
