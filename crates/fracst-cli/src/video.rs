@@ -105,7 +105,8 @@ pub struct VideoArgs {
     /// Write PNG frames instead of a video file.
     #[arg(long)]
     frames: bool,
-    /// ffmpeg to use (default: $FRACST_FFMPEG, a downloaded one, then the PATH).
+    /// ffmpeg to use (default: $FRACST_FFMPEG, then one fracst remembers or
+    /// downloaded, the PATH, and where package managers install it).
     #[arg(long)]
     ffmpeg: Option<PathBuf>,
     /// Download ffmpeg without asking if there is none.

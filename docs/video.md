@@ -134,10 +134,23 @@ Without ffmpeg (or with `--frames`), frames are written as PNGs to
 
 ### Getting ffmpeg
 
-fracst uses `FRACST_FFMPEG`, then an ffmpeg it downloaded earlier, then one
-on the `PATH`. If there is none, the app offers to download one, and the CLI
-asks (or downloads without asking with `--download-ffmpeg`). The builds are
-pinned to ffmpeg 9.0.2 and checked against these SHA-256 checksums before use:
+fracst looks for ffmpeg in this order:
+
+1. `FRACST_FFMPEG`.
+2. One chosen with **Locate ffmpeg…** in the app, which fracst remembers.
+3. One it downloaded earlier.
+4. One on the `PATH`.
+5. Where package managers put it: winget (including packages whose command
+   links are missing), Scoop, Chocolatey and `C:fmpegin` on Windows;
+   Homebrew, MacPorts, `/usr/local/bin`, `/usr/bin`, Snap and `~/.local/bin`
+   elsewhere. Apps opened from the macOS Finder don't get Homebrew's folder
+   on their `PATH`, and winget can fail to create its links, so the `PATH`
+   alone misses these.
+
+If there is none, the app offers to download one or to locate one, and the
+CLI asks (or downloads without asking with `--download-ffmpeg`). The builds
+are pinned to ffmpeg 9.0.2 and checked against these SHA-256 checksums before
+use:
 
 | Platform | Source | Size |
 |---|---|---|

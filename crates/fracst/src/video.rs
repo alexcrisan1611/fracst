@@ -751,6 +751,17 @@ impl VideoPanel {
                     {
                         self.download_ffmpeg();
                     }
+                    if ui
+                        .button("Locate ffmpeg…")
+                        .on_hover_text("Choose an ffmpeg you have; fracst remembers it")
+                        .clicked()
+                        && let Some(exe) = rfd::FileDialog::new().set_title("Choose ffmpeg").pick_file()
+                    {
+                        match ffmpeg::remember(&exe) {
+                            Ok(()) => self.encode(Some(exe)),
+                            Err(e) => self.status = e,
+                        }
+                    }
                     if ui.button("Write PNG frames instead").clicked() {
                         self.encode(None);
                     }

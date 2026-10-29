@@ -1,10 +1,15 @@
 //! Finding, downloading and running ffmpeg.
 //!
-//! fracst does not bundle an encoder. It uses an ffmpeg named by
-//! `FRACST_FFMPEG`, the one it downloaded earlier into its data folder, or
-//! one on the `PATH`, in that order. If there is none it can download a
-//! static build, pinned by version and SHA-256 below, into its data folder
-//! (no administrator rights, nothing else on the system changes).
+//! fracst does not bundle an encoder. It uses, in this order, an ffmpeg
+//! named by `FRACST_FFMPEG`, the one chosen with [`remember`], the one it
+//! downloaded earlier into its data folder, one on the `PATH`, or one where
+//! package managers put it. The last matters because their `PATH` entries
+//! don't always reach apps: winget can fail to create its command links,
+//! and apps opened from the macOS Finder don't see Homebrew's folder.
+//!
+//! If there is none, fracst can download a static build, pinned by version
+//! and SHA-256 below, into its data folder (no administrator rights, nothing
+//! else on the system changes).
 
 use crate::project::Codec;
 use sha2::{Digest, Sha256};
@@ -141,16 +146,70 @@ fn works(exe: &Path) -> bool {
         .is_ok_and(|s| s.success())
 }
 
+/// The file holding the ffmpeg chosen with [`remember`].
+fn remembered_file() -> Option<PathBuf> {
+    data_dir().map(|d| d.join("ffmpeg-path.txt"))
+}
+
+/// Use this ffmpeg from now on, if it runs.
+pub fn remember(exe: &Path) -> Result<(), String> {
+    if !works(exe) {
+        return Err(format!("{} does not run as ffmpeg", exe.display()));
+    }
+    let file = remembered_file().ok_or("cannot find a folder for user data")?;
+    std::fs::create_dir_all(file.parent().unwrap()).map_err(|e| e.to_string())?;
+    std::fs::write(&file, exe.to_string_lossy().as_bytes()).map_err(|e| e.to_string())
+}
+
+/// Where package managers install ffmpeg.
+fn installed() -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let var = |k: &str| std::env::var_os(k).map(PathBuf::from);
+    #[cfg(windows)]
+    {
+        if let Some(local) = var("LOCALAPPDATA") {
+            let winget = local.join("Microsoft").join("WinGet");
+            found.push(winget.join("Links").join(EXE));
+            // winget unpacks archives into Packages/<id>_<source>/<folder>/bin.
+            let packages = std::fs::read_dir(winget.join("Packages")).into_iter().flatten().flatten();
+            for package in packages.filter(|p| p.file_name().to_string_lossy().to_lowercase().contains("ffmpeg")) {
+                for inner in std::fs::read_dir(package.path()).into_iter().flatten().flatten() {
+                    found.push(inner.path().join("bin").join(EXE));
+                }
+                found.push(package.path().join("bin").join(EXE));
+            }
+        }
+        if let Some(home) = var("USERPROFILE") {
+            found.push(home.join("scoop").join("shims").join(EXE));
+        }
+        let data = var("ProgramData").unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+        found.push(data.join("chocolatey").join("bin").join(EXE));
+        found.push(Path::new("C:/ffmpeg/bin").join(EXE));
+    }
+    #[cfg(unix)]
+    {
+        for dir in ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin", "/usr/bin", "/snap/bin"] {
+            found.push(Path::new(dir).join(EXE));
+        }
+        if let Some(home) = var("HOME") {
+            found.push(home.join(".local/bin").join(EXE));
+        }
+    }
+    found
+}
+
 /// The ffmpeg to use, if any.
 pub fn find() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("FRACST_FFMPEG").filter(|v| !v.is_empty()) {
         return Some(PathBuf::from(p));
     }
-    if let Some(p) = managed_path().filter(|p| p.is_file() && works(p)) {
-        return Some(p);
-    }
+    let remembered = remembered_file()
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .map(|s| PathBuf::from(s.trim()))
+        .filter(|p| !p.as_os_str().is_empty());
     let on_path = PathBuf::from(EXE);
-    works(&on_path).then_some(on_path)
+    let candidates = remembered.into_iter().chain(managed_path()).filter(|p| p.is_file());
+    candidates.chain(std::iter::once(on_path)).chain(installed().into_iter().filter(|p| p.is_file())).find(|p| works(p))
 }
 
 /// Download, verify and unpack the pinned build. `progress` gets bytes
