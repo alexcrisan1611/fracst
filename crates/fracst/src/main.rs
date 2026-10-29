@@ -3,7 +3,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod prefs;
 mod remote_config;
+mod theme;
 mod update;
 mod video;
 mod worker;

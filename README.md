@@ -29,8 +29,9 @@ choose **More info → Run anyway** if SmartScreen asks. On macOS right-click th
 app and choose **Open** the first time.
 
 At startup the app asks GitHub for the latest release's version and, if it is
-newer, shows a link to it in the menu bar. Nothing else is sent. Turn this off
-under **Help → Check for updates at startup** (or set `FRACST_NO_UPDATE_CHECK=1`).
+newer, shows a link to it in the toolbar. Nothing else is sent. Turn this off
+under **App → Check for updates at startup** in the settings (or set
+`FRACST_NO_UPDATE_CHECK=1`).
 To upgrade, run the new installer over the old one; settings are kept.
 
 To build from source instead, install [Rust](https://rustup.rs) and run
@@ -193,7 +194,7 @@ fracst-cli deep.kfr --zoom-out 500 --zoom-out-factor 2 -o frames/zoom.png
 
 ### Zoom videos
 
-**Make video…** (under Export, or in the File menu) sets up a video from the
+**Make video…** (under Export, or in the toolbar's Video menu) sets up a video from the
 whole set into the current location. fracst renders one *keyframe* per
 doubling of the zoom, from the location outwards, here or on the remote GPU,
 in the background while you keep exploring. Each keyframe is saved to a
@@ -302,3 +303,7 @@ gateway              Cloudflare Worker: fracst keys, usage limits, relay to the 
 ## License
 
 Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT), at your option.
+
+The bundled fonts, [Inter](assets/fonts/Inter-LICENSE.txt) and
+[JetBrains Mono](assets/fonts/JetBrainsMono-LICENSE.txt), are under the SIL Open
+Font License 1.1.

@@ -53,6 +53,7 @@ Source: "{#SourceDir}\fracst-server.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\LICENSE-MIT"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\LICENSE-APACHE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..ssetsonts\*-LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [InstallDelete]
 ; Earlier versions named the shortcuts "fracst"; overwriting them would keep
