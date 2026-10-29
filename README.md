@@ -155,10 +155,11 @@ cargo run --release -p fracst [location.kfr | image.png]
 | Mouse wheel | Zoom around the cursor |
 | Drag | Pan |
 | Esc | Cancel the current render |
+| Tab | Show or hide the settings |
 | Ctrl+O / Ctrl+S / Ctrl+E | Open location, save `.kfr`, export PNG |
 | Drop a file | Open a `.kfr` or PNG with an embedded location |
 
-The side panel covers:
+The settings card on the right covers:
 
 - **Location**: arbitrary-precision coordinates, plus copy and paste as `.kfr` text.
 - **Find minibrot**: Newton's method.
@@ -170,7 +171,10 @@ The side panel covers:
 - **Export**: any size with supersampling, and **Make video…** (see below).
 - **Remote GPU**: render on a `fracst-server`, such as a cloud GPU (see below).
 - **Statistics**: per-stage timings, BLA skip factor and iteration range.
+- **App**: the startup update check, and the controls.
 
+Zooms glide into place (**Navigation → Zoom animation**: Quick, Smooth, Slow
+or Off), and jumps such as opening a file or finding a minibrot cross-fade.
 While a frame renders, the previous one is shown stretched to the new view.
 Slow frames get a quarter-resolution preview first.
 

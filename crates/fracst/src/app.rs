@@ -1,4 +1,5 @@
-use crate::prefs::Prefs;
+use crate::glide::{self, Glide};
+use crate::prefs::{self, Prefs};
 use crate::remote_config;
 use crate::theme;
 use crate::update::{self, Release};
@@ -23,6 +24,13 @@ const REMOTE_IDLE: Duration = Duration::from_secs(60);
 const PANEL_WIDTH: f32 = 340.0;
 /// Space between the canvas card's edge and what floats over it.
 const INSET: f32 = 12.0;
+
+/// The frame shown before a jump, fading out once the new one arrives.
+struct Fade {
+    texture: TextureHandle,
+    rect: Rect,
+    start: Option<Instant>,
+}
 
 struct Shown {
     view: View,
@@ -49,6 +57,17 @@ pub struct App {
     colouring: Colouring,
     shown: Option<Shown>,
     texture: Option<TextureHandle>,
+    /// Where the texture was drawn last frame.
+    placed: Option<Rect>,
+    /// The view the display's glide is relative to.
+    glide_target: Option<View>,
+    glide: Option<Glide>,
+    /// The next change to the view glides there, or cross-fades.
+    animate: bool,
+    jump: bool,
+    fade: Option<Fade>,
+    /// Testing hook: hold glides at this point.
+    glide_freeze: Option<f64>,
     recolour: bool,
     /// Parameters of the last render submitted.
     requested: Option<(View, Settings)>,
@@ -93,6 +112,8 @@ pub struct App {
     accent: Color32,
     /// Testing hook: save a screenshot of the window here once rendering settles, then exit.
     screenshot_to: Option<std::path::PathBuf>,
+    /// With the screenshot: first zoom in, held this far through the glide.
+    screenshot_glide: Option<f64>,
     screenshot_frames: u32,
 }
 
@@ -129,6 +150,13 @@ impl App {
             colouring,
             shown: None,
             texture: None,
+            placed: None,
+            glide_target: None,
+            glide: None,
+            animate: false,
+            jump: false,
+            fade: None,
+            glide_freeze: None,
             recolour: false,
             requested: None,
             render_id: 0,
@@ -161,6 +189,7 @@ impl App {
             logo,
             accent,
             screenshot_to,
+            screenshot_glide: env("FRACST_SCREENSHOT_GLIDE").and_then(|v| v.trim().parse().ok()),
             screenshot_frames: 0,
         };
         // Connecting may start a paid GPU, so only when asked to.
@@ -241,6 +270,7 @@ impl App {
                         Ok((view, period)) => {
                             self.status = format!("Found minibrot of period {period}.");
                             self.view = View { maxiter: self.view.maxiter.max(period * 8), ..view };
+                            self.jump = true;
                         }
                         Err(e) => self.status = e,
                     }
@@ -315,61 +345,154 @@ impl App {
             // so the region shows the middle of what was on screen.
             self.view.zoom = self.view.zoom * FloatExp::from(h as f64 / old_height as f64);
         }
-        ui.painter().rect_filled(full, theme::RADIUS, Color32::BLACK);
-        if self.region.is_some() {
-            ui.painter().rect_stroke(rect, theme::RADIUS, (1.0, Color32::from_gray(90)), StrokeKind::Outside);
-        }
+        // Changes made elsewhere since the last frame.
+        self.sync_display();
         let response = ui.allocate_rect(rect, Sense::click_and_drag());
 
-        if let (Some(tex), Some(shown)) = (&self.texture, &self.shown) {
-            let target = self.placement(rect, &shown.view, px_per_point);
-            paint_rounded(ui.painter(), rect, target, tex.id(), Color32::WHITE);
-        }
-
-        let to_pixels =
-            |p: Pos2| (((p.x - rect.min.x) * px_per_point) as f64, ((p.y - rect.min.y) * px_per_point) as f64);
+        // Pointer positions in the target view's pixels: what is under the
+        // pointer is what is displayed there, even mid-glide.
+        let offset = self.offset();
+        let to_pixels = |p: Pos2| {
+            let (x, y) = canvas_pixels(p, rect, px_per_point);
+            let t = offset.to_target([x - w as f64 / 2.0, y - h as f64 / 2.0]);
+            (t[0] + w as f64 / 2.0, t[1] + h as f64 / 2.0)
+        };
         if response.clicked()
             && let Some(p) = response.interact_pointer_pos()
         {
             let (x, y) = to_pixels(p);
-            let (dx, dy) = self.view.pixel_offset(x, y, w, h);
-            self.view.translate_pixels(dx, dy, h);
-            self.view.zoom = self.view.zoom * FloatExp::from(self.zoom_factor);
+            self.zoom_in_at(x, y);
         }
         if response.secondary_clicked() {
-            self.view.zoom = (self.view.zoom / FloatExp::from(self.zoom_factor)).max(FloatExp::from(0.25));
+            self.zoom_out();
         }
         if response.dragged_by(PointerButton::Primary) {
-            let d = response.drag_delta() * px_per_point;
+            let d = response.drag_delta() * px_per_point * offset.k as f32;
             if d != Vec2::ZERO {
-                let (dx, dy) = self.view.pixel_offset(w as f64 / 2.0 - d.x as f64, h as f64 / 2.0 - d.y as f64, w, h);
-                self.view.translate_pixels(dx, dy, h);
+                self.pan(d.x as f64, d.y as f64);
             }
         }
         if let Some(p) = response.hover_pos() {
-            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+            // Gliding smooths the wheel itself; otherwise let egui smooth it.
+            let gliding = !self.glide_length().is_zero();
+            let scroll = ui.input(|i| if gliding { wheel_points(i) } else { i.smooth_scroll_delta.y });
             if scroll != 0.0 {
                 let (x, y) = to_pixels(p);
                 let factor = 2f64.powf(scroll as f64 / 100.0);
                 if factor > 1.0 || self.view.zoom > FloatExp::from(0.25) {
                     self.view.zoom_at(x, y, w, h, factor);
+                    // What is under the pointer ends up under it once the glide ends.
+                    let (cx, cy) = canvas_pixels(p, rect, px_per_point);
+                    self.pan(cx - x, cy - y);
+                    self.animate = true;
                 }
             }
         }
+        self.sync_display();
+
+        ui.painter().rect_filled(full, theme::RADIUS, Color32::BLACK);
+        if self.region.is_some() {
+            ui.painter().rect_stroke(rect, theme::RADIUS, (1.0, Color32::from_gray(90)), StrokeKind::Outside);
+        }
+        self.placed = None;
+        if let (Some(tex), Some(shown)) = (&self.texture, &self.shown) {
+            let target = self.placement(rect, &shown.view, px_per_point);
+            paint_rounded(ui.painter(), rect, target, tex.id(), Color32::WHITE);
+            self.placed = Some(target);
+        }
+        let length = self.glide_length().as_secs_f64().max(1e-3);
+        if let Some(fade) = &mut self.fade {
+            // The old frame stays until the new one arrives, then fades out.
+            if fade.start.is_none() && self.texture.is_some() {
+                fade.start = Some(Instant::now());
+            }
+            let progress = |start: Instant| self.glide_freeze.unwrap_or(start.elapsed().as_secs_f64() / length);
+            let left = fade.start.map_or(1.0, |start| 1.0 - glide::ease(progress(start).min(1.0)));
+            if left <= 0.0 {
+                self.fade = None;
+            } else {
+                let tint = Color32::WHITE.linear_multiply(left as f32);
+                paint_rounded(ui.painter(), rect, fade.rect, fade.texture.id(), tint);
+            }
+        }
+        let gliding = self.glide.is_some_and(|g| g.progress(Instant::now(), self.glide_length()) < 1.0);
+        if gliding || self.fade.as_ref().is_some_and(|f| f.start.is_some()) {
+            ui.ctx().request_repaint();
+        }
     }
 
-    /// Where the displayed texture (rendered for `shown`) lands for the current view,
-    /// so zooming and panning respond instantly while the new render runs.
+    /// Move the view so its contents shift by this many pixels.
+    fn pan(&mut self, dx: f64, dy: f64) {
+        let (w, h) = (self.settings.width, self.settings.height);
+        let (dx, dy) = self.view.pixel_offset(w as f64 / 2.0 - dx, h as f64 / 2.0 - dy, w, h);
+        self.view.translate_pixels(dx, dy, h);
+    }
+
+    /// Centre on a point (in pixels from the top left) and zoom in.
+    fn zoom_in_at(&mut self, x: f64, y: f64) {
+        let (w, h) = (self.settings.width, self.settings.height);
+        let (dx, dy) = self.view.pixel_offset(x, y, w, h);
+        self.view.translate_pixels(dx, dy, h);
+        self.view.zoom = self.view.zoom * FloatExp::from(self.zoom_factor);
+        self.animate = true;
+    }
+
+    fn zoom_out(&mut self) {
+        self.view.zoom = (self.view.zoom / FloatExp::from(self.zoom_factor)).max(FloatExp::from(0.25));
+        self.animate = true;
+    }
+
+    /// How long zooms glide and jumps fade for; zero when animation is off.
+    fn glide_length(&self) -> Duration {
+        self.prefs.glide()
+    }
+
+    /// How far the display is from the target view right now.
+    fn offset(&self) -> glide::Offset {
+        let Some(g) = &self.glide else { return glide::Offset::NONE };
+        let progress = self.glide_freeze.unwrap_or_else(|| g.progress(Instant::now(), self.glide_length()));
+        g.at(progress)
+    }
+
+    /// Follow changes to the view: glide to zooms, cross-fade to jumps, and
+    /// move with everything else.
+    fn sync_display(&mut self) {
+        let Some(old) = self.glide_target.as_ref() else {
+            self.glide_target = Some(self.view.clone());
+            return;
+        };
+        if *old == self.view {
+            self.animate = false;
+            self.jump = false;
+            return;
+        }
+        let gliding = !self.glide_length().is_zero();
+        if std::mem::take(&mut self.jump) {
+            self.glide = None;
+            self.animate = false;
+            if gliding && let (Some(texture), Some(rect)) = (self.texture.take(), self.placed) {
+                // Hold the old frame, not a recolouring of it, until the new one is ready.
+                self.shown = None;
+                self.fade = Some(Fade { texture, rect, start: None });
+            }
+        } else if std::mem::take(&mut self.animate) && gliding {
+            let ratio = (self.view.zoom / old.zoom).to_f64();
+            let from = self.offset().retarget(ratio, centre_offset(old, &self.view, self.settings.height));
+            let sane = (1e-6..1e6).contains(&from.k) && from.d.iter().all(|v| v.is_finite());
+            self.glide = sane.then(|| Glide::new(from, Instant::now()));
+        }
+        self.glide_target = Some(self.view.clone());
+    }
+
+    /// Where the displayed texture (rendered for `shown`) lands for what is
+    /// displayed now, so zooming and panning respond instantly while the new
+    /// render runs.
     fn placement(&self, rect: Rect, shown: &View, px_per_point: f32) -> Rect {
-        let scale = (self.view.zoom / shown.zoom).to_f64().clamp(1e-6, 1e6) as f32;
-        let spacing = self.view.pixel_spacing(self.settings.height);
-        let n = shown.re.limbs().max(self.view.re.limbs());
-        let d_re = shown.re.with_limbs(n).sub(&self.view.re.with_limbs(n)).to_floatexp() / spacing;
-        let d_im = shown.im.with_limbs(n).sub(&self.view.im.with_limbs(n)).to_floatexp() / spacing;
-        let clamp = |v: FloatExp| v.to_f64().clamp(-1e7, 1e7) as f32;
-        let dy = if self.view.imag_down { clamp(d_im) } else { -clamp(d_im) };
-        let centre = rect.center() + Vec2::new(clamp(d_re), dy) / px_per_point;
-        Rect::from_center_size(centre, rect.size() * scale)
+        let scale = (self.view.zoom / shown.zoom).to_f64().clamp(1e-6, 1e6);
+        let (c, s) = self.offset().to_display(centre_offset(shown, &self.view, self.settings.height));
+        let clamp = |v: f64| v.clamp(-1e7, 1e7) as f32;
+        let centre = rect.center() + Vec2::new(clamp(c[0]), clamp(c[1])) / px_per_point;
+        Rect::from_center_size(centre, rect.size() * (scale * s).clamp(1e-6, 1e6) as f32)
     }
 
     // ---- side panel -----------------------------------------------------------
@@ -435,12 +558,16 @@ impl App {
             if ui.button("Go").clicked() {
                 let maxiter = self.fields.iterations.trim().parse().unwrap_or(self.view.maxiter);
                 match View::parse(&self.fields.re, &self.fields.im, &self.fields.zoom, maxiter) {
-                    Some(v) => self.view = View { imag_down: self.view.imag_down, ..v },
+                    Some(v) => {
+                        self.view = View { imag_down: self.view.imag_down, ..v };
+                        self.jump = true;
+                    }
                     None => self.status = "Could not parse the location.".into(),
                 }
             }
             if ui.button("Reset").clicked() {
                 self.view = View::default();
+                self.jump = true;
             }
             if ui.button("Copy").on_hover_text("Copy the location as .kfr text").clicked() {
                 ui.ctx().copy_text(kfr::to_string(&self.view, &self.colouring));
@@ -462,8 +589,19 @@ impl App {
                 }
             });
             if ui.button("Zoom out").clicked() {
-                self.view.zoom = (self.view.zoom / FloatExp::from(self.zoom_factor)).max(FloatExp::from(0.25));
+                self.zoom_out();
             }
+        });
+        ui.horizontal(|ui| {
+            ui.label("Zoom animation");
+            let current = prefs::glide_name(self.prefs.glide_ms);
+            ComboBox::from_id_salt("glide").selected_text(current).show_ui(ui, |ui| {
+                for (name, ms) in prefs::GLIDES {
+                    if ui.selectable_value(&mut self.prefs.glide_ms, ms, name).changed() {
+                        self.prefs.save();
+                    }
+                }
+            });
         });
         ui.horizontal(|ui| {
             let busy = self.blocking.is_some();
@@ -938,6 +1076,7 @@ impl App {
                             self.view = loc.view;
                             self.colouring = loc.colouring;
                             self.recolour = true;
+                            self.jump = true;
                             self.show_location = false;
                         }
                         Err(e) => self.status = format!("Could not read location: {e}"),
@@ -981,6 +1120,7 @@ impl App {
                     self.view = loc.view.clone();
                     self.colouring = loc.colouring.clone();
                     self.recolour = true;
+                    self.jump = true;
                 }
                 self.status = format!("Opened video project {}.", dir.display());
             }
@@ -999,6 +1139,7 @@ impl App {
                 self.view = loc.view;
                 self.colouring = loc.colouring;
                 self.recolour = true;
+                self.jump = true;
                 self.status = format!("Opened {}.", path.display());
             }
             Err(e) => self.status = format!("Could not open {}: {e}", path.display()),
@@ -1085,7 +1226,15 @@ impl eframe::App for App {
         let settled = self.worker.current().is_none()
             && self.shown.as_ref().is_some_and(|s| !s.preview)
             && !matches!(self.remote_status, RemoteStatus::Connecting(_));
-        if settled && let Some(path) = self.screenshot_to.take() {
+        if settled
+            && self.screenshot_to.is_some()
+            && let Some(progress) = self.screenshot_glide.take()
+        {
+            // Zoom into a point up and to the left, and hold the glide there.
+            self.glide_freeze = Some(progress);
+            self.zoom_in_at(self.settings.width as f64 * 0.3, self.settings.height as f64 * 0.3);
+            ctx.request_repaint();
+        } else if settled && let Some(path) = self.screenshot_to.take() {
             ctx.request_screenshot(move |img| {
                 let rgba: Vec<u8> = img.pixels.iter().flat_map(|c| c.to_array()).collect();
                 let _ = fracst_core::image::save_png(&path, &rgba, img.size[0] as u32, img.size[1] as u32, None);
@@ -1111,4 +1260,34 @@ fn paint_rounded(painter: &egui::Painter, clip: Rect, target: Rect, texture: Tex
     let to_uv = |p: Pos2| Pos2::new((p.x - target.min.x) / target.width(), (p.y - target.min.y) / target.height());
     let uv = Rect::from_min_max(to_uv(visible.min), to_uv(visible.max));
     painter.add(RectShape::filled(visible, theme::RADIUS, tint).with_texture(texture, uv));
+}
+
+/// A position on the canvas in its pixels, from the top left.
+fn canvas_pixels(p: Pos2, rect: Rect, px_per_point: f32) -> (f64, f64) {
+    (((p.x - rect.min.x) * px_per_point) as f64, ((p.y - rect.min.y) * px_per_point) as f64)
+}
+
+/// Where `of`'s centre is relative to `from`'s, in `from`'s pixels on screen.
+fn centre_offset(of: &View, from: &View, height: u32) -> [f64; 2] {
+    let spacing = from.pixel_spacing(height);
+    let n = of.re.limbs().max(from.re.limbs());
+    let d_re = of.re.with_limbs(n).sub(&from.re.with_limbs(n)).to_floatexp() / spacing;
+    let d_im = of.im.with_limbs(n).sub(&from.im.with_limbs(n)).to_floatexp() / spacing;
+    let clamp = |v: FloatExp| v.to_f64().clamp(-1e12, 1e12);
+    [clamp(d_re), if from.imag_down { clamp(d_im) } else { -clamp(d_im) }]
+}
+
+/// This frame's mouse wheel movement, unsmoothed, in points (as egui counts them).
+fn wheel_points(input: &egui::InputState) -> f32 {
+    let mut points = 0.0;
+    for event in &input.raw.events {
+        if let egui::Event::MouseWheel { unit, delta, .. } = event {
+            points += match unit {
+                egui::MouseWheelUnit::Point => delta.y,
+                egui::MouseWheelUnit::Line => 40.0 * delta.y,
+                egui::MouseWheelUnit::Page => input.content_rect().height() * delta.y,
+            };
+        }
+    }
+    points
 }
