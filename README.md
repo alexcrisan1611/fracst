@@ -178,7 +178,8 @@ The settings card on the right covers:
 Type a few letters of a name: actions run at once, switches and choices such
 as palettes, transfer functions or the click zoom change right there, and
 anything with a value opens its place in the settings and highlights it.
-Entries used lately come first.
+Entries used lately come first, and the last ten locations opened or saved
+and video projects used are there too.
 
 Zooms glide into place (**Navigation → Zoom animation**: Quick, Smooth, Slow
 or Off), and jumps such as opening a file or finding a minibrot cross-fade.

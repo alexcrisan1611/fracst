@@ -301,7 +301,10 @@ impl App {
                     self.worker.finished(msg.id);
                     self.blocking = None;
                     self.status = match result {
-                        Ok((path, t)) => format!("Saved {} in {:.2}s.", path.display(), t.as_secs_f64()),
+                        Ok((path, t)) => {
+                            self.prefs.used_location(&path);
+                            format!("Saved {} in {:.2}s.", path.display(), t.as_secs_f64())
+                        }
                         Err(e) => format!("Export failed: {e}"),
                     };
                 }
@@ -1237,6 +1240,7 @@ impl App {
                 self.colouring = loc.colouring;
                 self.recolour = true;
                 self.jump = true;
+                self.prefs.used_location(path);
                 self.status = format!("Opened {}.", path.display());
             }
             Err(e) => self.status = format!("Could not open {}: {e}", path.display()),
@@ -1248,7 +1252,10 @@ impl App {
             rfd::FileDialog::new().add_filter("Location", &["kfr"]).set_file_name("location.kfr").save_file()
         {
             self.status = match kfr::save(&path, &self.view, &self.colouring) {
-                Ok(()) => format!("Saved {}.", path.display()),
+                Ok(()) => {
+                    self.prefs.used_location(&path);
+                    format!("Saved {}.", path.display())
+                }
                 Err(e) => format!("Could not save: {e}"),
             };
         }
@@ -1315,6 +1322,12 @@ impl eframe::App for App {
         }
         let remote = self.remote();
         self.video.ui(&ctx, remote, &self.colouring);
+        if let Some(dir) = self.video.project_dir()
+            && self.prefs.recent_videos.first().map(|d| d.as_path()) != std::path::absolute(dir).ok().as_deref()
+        {
+            let dir = dir.to_path_buf();
+            self.prefs.used_video(&dir);
+        }
         if self.search.open {
             let entries = self.entries();
             if let Some(entry) = self.search.show(&ctx, &entries, &self.prefs.recent_commands) {

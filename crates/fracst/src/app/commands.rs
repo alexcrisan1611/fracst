@@ -8,6 +8,7 @@ use crate::search::{Entry, State};
 use crate::video::VideoCmd;
 use eframe::egui::{self, Align, Stroke, StrokeKind, ViewportCommand};
 use fracst_core::{Slopes, Transfer, View, kfr};
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -40,6 +41,7 @@ pub enum Cmd {
     Minimise,
     Maximise,
     Video(VideoCmd),
+    OpenRecent(PathBuf),
 }
 
 /// On/off settings.
@@ -209,6 +211,15 @@ pub fn spot(ui: &egui::Ui, response: &egui::Response, here: Spot, light: &mut Op
     ui.ctx().request_repaint();
 }
 
+/// A file or folder's name, then where it is.
+fn place(path: &Path) -> String {
+    let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+    match path.parent().and_then(|p| p.file_name()) {
+        Some(parent) => format!("{name}  ·  {}", parent.to_string_lossy()),
+        None => name,
+    }
+}
+
 /// "Ctrl+O", or "Cmd+O" on a Mac.
 fn keys(k: &str) -> String {
     if cfg!(target_os = "macos") { format!("Cmd+{k}") } else { format!("Ctrl+{k}") }
@@ -227,6 +238,14 @@ impl App {
         add(Export, "Export PNG…".into(), "File", "export".into(), Some(keys("E")));
         add(CopyLocation, "Copy location as text".into(), "File", "copy".into(), None);
         add(PasteLocation, "Paste location text…".into(), "File", "paste".into(), None);
+        for path in &self.prefs.recent_locations {
+            let title = format!("Open {}", place(path));
+            add(OpenRecent(path.clone()), title, "Recent locations", format!("recent:{}", path.display()), None);
+        }
+        for dir in &self.prefs.recent_videos {
+            let title = format!("Open video {}", place(dir));
+            add(OpenRecent(dir.clone()), title, "Recent videos", format!("recent:{}", dir.display()), None);
+        }
         add(MakeVideo, "Make video…".into(), "Video", "make-video".into(), None);
         add(OpenVideoProject, "Open video project…".into(), "Video", "open-video".into(), None);
         for (cmd, title) in self.video.commands() {
@@ -420,6 +439,14 @@ impl App {
             Video(cmd) => {
                 let remote = self.remote();
                 self.video.run(cmd, remote);
+            }
+            OpenRecent(path) => {
+                if path.exists() {
+                    self.open_path(&path);
+                } else {
+                    self.status = format!("{} is no longer there.", path.display());
+                    self.prefs.forget(&path);
+                }
             }
         }
     }
