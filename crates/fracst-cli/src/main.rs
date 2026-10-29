@@ -1,11 +1,29 @@
+mod video;
+
 use clap::Parser;
 use fracst_core::{Colouring, FloatExp, Frame, Progress, Renderer, Settings, View, image, kfr, newton};
 use std::path::PathBuf;
 use std::time::Instant;
 
-/// Render a Mandelbrot set location to PNG.
+/// Render a Mandelbrot set location to PNG, or make a zoom video of it
+/// (`fracst-cli video --help`).
 #[derive(Parser)]
-#[command(version, about)]
+#[command(version, about, args_conflicts_with_subcommands = true)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+    #[command(flatten)]
+    args: Args,
+}
+
+#[derive(clap::Subcommand)]
+enum Command {
+    /// Make a zoom video into a location: render keyframes (resumable), then
+    /// interpolate them into smooth frames and encode them with ffmpeg.
+    Video(video::VideoArgs),
+}
+
+#[derive(clap::Args)]
 struct Args {
     /// Location file: .kfr, or a PNG with an embedded location.
     location: Option<PathBuf>,
@@ -97,8 +115,7 @@ enum Backend {
 impl Backend {
     fn new(args: &Args) -> Result<Self, String> {
         let Some(url) = &args.remote else { return Ok(Backend::Local(Renderer::new())) };
-        let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
-        let key = args.key.clone().or_else(|| env("FRACST_REMOTE_KEY")).or_else(|| env("FAL_KEY"));
+        let key = remote_key(&args.key);
         let t = Instant::now();
         let client = fracst_remote::Client::connect(url, key.as_deref())?;
         println!(
@@ -118,11 +135,24 @@ impl Backend {
     }
 }
 
+/// The key for a remote server: given, else from the environment.
+fn remote_key(key: &Option<String>) -> Option<String> {
+    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+    key.clone().or_else(|| env("FRACST_REMOTE_KEY")).or_else(|| env("FAL_KEY"))
+}
+
 fn main() {
-    let args = Args::parse();
-    if let Err(e) = run(args) {
-        eprintln!("error: {e}");
-        std::process::exit(1);
+    let cli = Cli::parse();
+    let result = match cli.command {
+        Some(Command::Video(v)) => video::run(v),
+        None => run(cli.args).map(|()| 0),
+    };
+    match result {
+        Ok(code) => std::process::exit(code),
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
     }
 }
 
