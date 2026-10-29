@@ -755,7 +755,7 @@ impl App {
                 let mut dismiss = false;
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     dismiss = ui.small_button("×").on_hover_text("Dismiss").clicked();
-                    ui.hyperlink_to(format!("fracst {} is available", release.version), &release.url)
+                    ui.hyperlink_to(format!("Fracst {} is available", release.version), &release.url)
                         .on_hover_text("Open the release page to download it");
                 });
                 if dismiss {

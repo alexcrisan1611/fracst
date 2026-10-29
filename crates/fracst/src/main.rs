@@ -8,7 +8,7 @@ mod update;
 mod worker;
 
 fn main() -> eframe::Result {
-    let mut viewport = eframe::egui::ViewportBuilder::default().with_title("fracst").with_inner_size([1400.0, 860.0]);
+    let mut viewport = eframe::egui::ViewportBuilder::default().with_title("Fracst").with_inner_size([1400.0, 860.0]);
     if let Ok((rgba, width, height)) = fracst_core::image::decode_rgba_png(include_bytes!("../../../assets/icon.png")) {
         viewport = viewport.with_icon(eframe::egui::IconData { rgba, width, height });
     }
