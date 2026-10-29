@@ -558,7 +558,7 @@ impl App {
         Rect::from_center_size(centre, rect.size() * (scale * s).clamp(1e-6, 1e6) as f32)
     }
 
-    // ---- side panel -----------------------------------------------------------
+    // ---- settings card --------------------------------------------------------
 
     fn controls(&mut self, ui: &mut egui::Ui) {
         fn section(ui: &mut egui::Ui, title: &str, open: bool, force: bool, add: impl FnOnce(&mut egui::Ui)) {
