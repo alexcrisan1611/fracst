@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod glide;
 mod prefs;
 mod remote_config;
 mod theme;
