@@ -95,7 +95,7 @@ fn visuals(accent: Color32) -> egui::Visuals {
     v.window_shadow = Shadow { offset: [0, 8], blur: 28, spread: 0, color: Color32::from_black_alpha(110) };
     v.popup_shadow = Shadow { offset: [0, 6], blur: 18, spread: 0, color: Color32::from_black_alpha(100) };
     v.extreme_bg_color = Color32::from_rgba_premultiplied(6, 6, 9, 200);
-    v.faint_bg_color = Color32::from_rgba_premultiplied(255, 255, 255, 6);
+    v.faint_bg_color = Color32::from_rgba_premultiplied(6, 6, 6, 6);
     v.code_bg_color = Color32::from_rgb(24, 24, 30);
     v.collapsing_header_frame = false;
     v.indent_has_left_vline = false;

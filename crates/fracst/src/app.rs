@@ -24,6 +24,10 @@ use std::time::{Duration, Instant};
 /// GPU is still up).
 const REMOTE_IDLE: Duration = Duration::from_secs(60);
 
+/// While the wheel keeps turning, the frame on screen is scaled and no new
+/// render starts; one starts once the wheel has been still this long.
+const WHEEL_SETTLE: Duration = Duration::from_millis(120);
+
 /// Width of the floating settings card.
 const PANEL_WIDTH: f32 = 340.0;
 /// Space between the canvas card's edge and what floats over it.
@@ -72,6 +76,8 @@ pub struct App {
     fade: Option<Fade>,
     /// Testing hook: hold glides at this point.
     glide_freeze: Option<f64>,
+    /// When the wheel last zoomed the view.
+    wheeled: Option<Instant>,
     recolour: bool,
     /// Parameters of the last render submitted.
     requested: Option<(View, Settings)>,
@@ -171,6 +177,7 @@ impl App {
             jump: false,
             fade: None,
             glide_freeze: None,
+            wheeled: None,
             recolour: false,
             requested: None,
             render_id: 0,
@@ -449,6 +456,7 @@ impl App {
                     let (cx, cy) = canvas_pixels(p, rect, px_per_point);
                     self.pan(cx - x, cy - y);
                     self.animate = true;
+                    self.wheeled = Some(Instant::now());
                 }
             }
         }
@@ -1028,7 +1036,7 @@ impl App {
                             if let Some(logo) = &self.logo {
                                 ui.add(egui::Image::new((logo.id(), Vec2::splat(18.0))));
                             }
-                            ui.label(RichText::new("fracst").font(theme::strong(14.5)).color(theme::TEXT));
+                            ui.label(RichText::new("Fracst").font(theme::strong(14.5)).color(theme::TEXT));
                         })
                         .response
                         .interact(Sense::CLICK | Sense::DRAG);
@@ -1349,7 +1357,15 @@ impl eframe::App for App {
         // Changes made after the canvas this frame (Go, the palette, …) glide
         // or fade from what is on screen now, before their render starts.
         self.sync_display();
-        self.request_render();
+        // Each wheel step would cancel the render before it; wait for the
+        // wheel to stop instead. The render in flight carries on meanwhile.
+        match self.wheeled.map(|t| WHEEL_SETTLE.saturating_sub(t.elapsed())) {
+            Some(wait) if !wait.is_zero() => ctx.request_repaint_after(wait),
+            _ => {
+                self.wheeled = None;
+                self.request_render();
+            }
+        }
         self.pause_idle_remote(&ctx);
         if self.recolour {
             ctx.request_repaint();
