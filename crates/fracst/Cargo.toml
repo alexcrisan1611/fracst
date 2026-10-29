@@ -10,6 +10,8 @@ repository.workspace = true
 [dependencies]
 fracst-core.workspace = true
 fracst-remote = { path = "../fracst-remote" }
+fracst-video = { path = "../fracst-video" }
+rayon.workspace = true
 eframe.workspace = true
 rfd.workspace = true
 ureq = { version = "3", default-features = false, features = ["rustls"] }

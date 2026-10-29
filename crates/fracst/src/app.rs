@@ -1,5 +1,6 @@
 use crate::remote_config;
 use crate::update::{self, Release};
+use crate::video::VideoPanel;
 use crate::worker::{Outcome, RemoteConfig, RemoteStatus, Task, Worker};
 use eframe::egui::{
     self, CollapsingHeader, Color32, ComboBox, DragValue, Key, PointerButton, Pos2, Rect, Sense, Slider, StrokeKind,
@@ -77,6 +78,7 @@ pub struct App {
     update_rx: Option<Receiver<Release>>,
     /// A newer release, until dismissed.
     update: Option<Release>,
+    video: VideoPanel,
     /// Testing hook: save a screenshot of the window here once rendering settles, then exit.
     screenshot_to: Option<std::path::PathBuf>,
     screenshot_frames: u32,
@@ -133,6 +135,7 @@ impl App {
             update_check,
             update_rx,
             update: None,
+            video: VideoPanel::new(cc.egui_ctx.clone()),
             screenshot_to,
             screenshot_frames: 0,
         };
@@ -631,9 +634,15 @@ impl App {
             ui.add(DragValue::new(&mut self.export_supersample).range(1..=4).suffix("×"));
             ui.end_row();
         });
-        if ui.add_enabled(self.blocking.is_none(), egui::Button::new("Export PNG…")).clicked() {
-            self.export_dialog();
-        }
+        ui.horizontal(|ui| {
+            if ui.add_enabled(self.blocking.is_none(), egui::Button::new("Export PNG…")).clicked() {
+                self.export_dialog();
+            }
+            if ui.button("Make video…").on_hover_text("A zoom video from the whole set into this location").clicked()
+            {
+                self.make_video();
+            }
+        });
     }
 
     fn export_dialog(&mut self) {
@@ -733,6 +742,15 @@ impl App {
                 }
                 if ui.button("Export PNG…  (Ctrl+E)").clicked() {
                     self.export_dialog();
+                }
+                ui.separator();
+                if ui.button("Make video…").clicked() {
+                    self.make_video();
+                }
+                if ui.button("Open video project…").clicked()
+                    && let Some(dir) = rfd::FileDialog::new().set_title("Video project folder").pick_folder()
+                {
+                    self.open_video_project(&dir);
                 }
                 ui.separator();
                 if ui.button("Quit").clicked() {
@@ -841,7 +859,32 @@ impl App {
         self.open_path(&path);
     }
 
+    fn make_video(&mut self) {
+        let location = kfr::Location { view: self.view.clone(), colouring: self.colouring.clone(), size: None };
+        self.video.start_new(location);
+    }
+
+    fn open_video_project(&mut self, dir: &Path) {
+        match self.video.open_project(dir) {
+            Ok(()) => {
+                // Show the video's destination, so its colours can be tuned here.
+                if let Some(loc) = self.video.project_location() {
+                    self.view = loc.view.clone();
+                    self.colouring = loc.colouring.clone();
+                    self.recolour = true;
+                }
+                self.status = format!("Opened video project {}.", dir.display());
+            }
+            Err(e) => self.status = format!("Could not open the video project: {e}"),
+        }
+    }
+
+    /// Open a location file, or a video project's folder.
     pub fn open_path(&mut self, path: &Path) {
+        if path.is_dir() {
+            self.open_video_project(path);
+            return;
+        }
         match kfr::load(path) {
             Ok(loc) => {
                 self.view = loc.view;
@@ -903,6 +946,9 @@ impl eframe::App for App {
         if self.show_help {
             self.help_window(&ctx);
         }
+        let remote = Some((self.remote_url.trim().to_string(), self.remote_key.trim().to_string()))
+            .filter(|(url, _)| !url.is_empty());
+        self.video.ui(&ctx, remote, &self.colouring);
         self.request_render();
         self.pause_idle_remote(&ctx);
         if self.recolour {
