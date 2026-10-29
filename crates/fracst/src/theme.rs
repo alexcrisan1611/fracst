@@ -15,6 +15,8 @@ pub const GAP: f32 = 8.0;
 pub const WINDOW_BG: Color32 = Color32::from_rgb(11, 11, 14);
 /// Floating cards and pills: dark and slightly see-through over the fractal.
 pub const CARD_FILL: Color32 = Color32::from_rgba_premultiplied(17, 17, 21, 224);
+/// For what needs reading over a busy fractal, like the palette.
+pub const SOLID_FILL: Color32 = Color32::from_rgba_premultiplied(19, 19, 24, 248);
 pub const CARD_STROKE: Color32 = Color32::from_rgba_premultiplied(56, 56, 64, 140);
 pub const TEXT: Color32 = Color32::from_rgb(226, 226, 232);
 pub const TEXT_WEAK: Color32 = Color32::from_rgb(150, 150, 160);

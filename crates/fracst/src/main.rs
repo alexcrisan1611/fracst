@@ -6,6 +6,7 @@ mod app;
 mod glide;
 mod prefs;
 mod remote_config;
+mod search;
 mod theme;
 mod update;
 mod video;
