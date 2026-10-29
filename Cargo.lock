@@ -1360,10 +1360,12 @@ dependencies = [
  "fracst-core",
  "fracst-remote",
  "fracst-video",
+ "raw-window-handle",
  "rayon",
  "rfd",
  "serde_json",
  "ureq",
+ "windows-sys 0.61.2",
  "winresource",
 ]
 

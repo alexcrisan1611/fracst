@@ -3,6 +3,7 @@ use crate::remote_config;
 use crate::theme;
 use crate::update::{self, Release};
 use crate::video::VideoPanel;
+use crate::window;
 use crate::worker::{Outcome, RemoteConfig, RemoteStatus, Task, Worker};
 use eframe::egui::{
     self, Align2, CollapsingHeader, Color32, ComboBox, DragValue, Id, Key, Modifiers, PointerButton, Pos2, Rect,
@@ -115,6 +116,7 @@ impl App {
         let colouring = Colouring::default();
         let accent = theme::accent_from(colouring.palette.keys());
         theme::install(&cc.egui_ctx, accent);
+        window::round_corners(cc);
         let logo =
             fracst_core::image::decode_rgba_png(include_bytes!("../../../assets/icon.png")).ok().map(|(rgba, w, h)| {
                 let img = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
@@ -777,10 +779,17 @@ impl App {
             theme::pill().show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
-                    if let Some(logo) = &self.logo {
-                        ui.add(egui::Image::new((logo.id(), Vec2::splat(18.0))));
-                    }
-                    ui.label(RichText::new("fracst").font(theme::strong(14.5)).color(theme::TEXT));
+                    // The wordmark doubles as a handle for moving the window.
+                    let mark = ui
+                        .scope(|ui| {
+                            if let Some(logo) = &self.logo {
+                                ui.add(egui::Image::new((logo.id(), Vec2::splat(18.0))));
+                            }
+                            ui.label(RichText::new("fracst").font(theme::strong(14.5)).color(theme::TEXT));
+                        })
+                        .response
+                        .interact(Sense::click_and_drag());
+                    window::drag_window(ctx, &mark);
                     ui.add_space(6.0);
                     let tool = |ui: &mut egui::Ui, text: &str, hint: &str| {
                         ui.add(egui::Button::new(text).frame_when_inactive(false)).on_hover_text(hint).clicked()
@@ -1035,6 +1044,11 @@ impl App {
 }
 
 impl eframe::App for App {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        // Transparent where the window's rounded corners are painted.
+        if window::PAINT_CORNERS { [0.0; 4] } else { theme::WINDOW_BG.to_normalized_gamma_f32() }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.poll_worker(&ctx);
@@ -1045,12 +1059,15 @@ impl eframe::App for App {
             theme::set_accent(&ctx, accent);
         }
         let window = ui.max_rect();
-        ui.painter().rect_filled(window, 0.0, theme::WINDOW_BG);
-        let canvas = window.shrink(theme::GAP);
+        ui.painter().rect_filled(window, window::window_radius(&ctx), theme::WINDOW_BG);
+        let mut canvas = window.shrink(theme::GAP);
+        canvas.min.y = window.top() + window::top_gap();
         ui.scope_builder(egui::UiBuilder::new().max_rect(canvas), |ui| self.canvas(ui));
+        window::frame_controls(ui, window, canvas);
         self.toolbar(&ctx, canvas);
         self.status_pill(&ctx, canvas);
-        self.side_panel(&ctx, canvas, canvas.top() + INSET);
+        let panel_top = window::buttons(&ctx, canvas, INSET).map_or(canvas.top() + INSET, |bottom| bottom + 8.0);
+        self.side_panel(&ctx, canvas, panel_top);
         if self.show_location {
             self.location_window(&ctx);
         }
