@@ -28,6 +28,7 @@ pub enum Cmd {
     CancelRender,
     ZoomFactor(f64),
     Glide(u32),
+    Appearance(crate::theme::Appearance),
     RandomPalette,
     Palette(usize),
     Transfer(Transfer),
@@ -59,10 +60,11 @@ pub enum Flag {
     ImagDown,
     Region,
     UpdateCheck,
+    Midnight,
 }
 
 impl Flag {
-    const ALL: [(Flag, &'static str, &'static str, &'static str); 12] = [
+    const ALL: [(Flag, &'static str, &'static str, &'static str); 13] = [
         (Flag::AutoIterations, "Auto iterations", "Navigation", "auto-iterations"),
         (Flag::Smooth, "Smooth colouring", "Colour", "smooth"),
         (Flag::Flat, "Flat colouring", "Colour", "flat"),
@@ -75,6 +77,7 @@ impl Flag {
         (Flag::ImagDown, "Imaginary axis points down", "Rendering", "imag-down"),
         (Flag::Region, "Render only a region", "Rendering", "region"),
         (Flag::UpdateCheck, "Check for updates at startup", "App", "update-check"),
+        (Flag::Midnight, "Midnight: true black", "App", "midnight"),
     ];
 }
 
@@ -293,6 +296,10 @@ impl App {
             let on = self.prefs.glide_ms == ms;
             choice(Glide(ms), format!("Zoom animation: {name}"), "Navigation", format!("glide:{ms}"), on);
         }
+        for a in crate::theme::Appearance::ALL {
+            let on = self.prefs.appearance == a;
+            choice(Appearance(a), format!("Appearance: {}", a.name()), "App", format!("appearance:{}", a.key()), on);
+        }
         for (i, (name, p)) in fracst_core::Palette::presets().into_iter().enumerate() {
             let on = self.colouring.palette == p;
             choice(Palette(i), format!("Palette: {name}"), "Colour", format!("palette:{name}"), on);
@@ -334,6 +341,7 @@ impl App {
             Flag::ImagDown => self.view.imag_down,
             Flag::Region => self.region.is_some(),
             Flag::UpdateCheck => self.update_check,
+            Flag::Midnight => self.prefs.midnight,
         }
     }
 
@@ -357,6 +365,10 @@ impl App {
             Flag::UpdateCheck => {
                 self.update_check = on;
                 crate::update::set_enabled(on);
+            }
+            Flag::Midnight => {
+                self.prefs.midnight = on;
+                self.prefs.save();
             }
         }
         self.recolour = true;
@@ -398,6 +410,10 @@ impl App {
             ZoomFactor(f) => self.zoom_factor = f,
             Glide(ms) => {
                 self.prefs.glide_ms = ms;
+                self.prefs.save();
+            }
+            Appearance(a) => {
+                self.prefs.appearance = a;
                 self.prefs.save();
             }
             RandomPalette => self.random_palette(),

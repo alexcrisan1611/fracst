@@ -7,8 +7,11 @@ automatic iteration limits and minibrot-aware references.
 
 - Zoom to 10^1000 and beyond, interactively. Zooms glide into place, and
   frames render in the background while the last one stays on screen.
-- A dark, frameless window where the image fills the screen, with a floating
-  toolbar and a settings card you can hide with Tab.
+- A frameless window where the image fills the screen, with a floating
+  toolbar and a settings card you can hide with Tab. Dark or Light, or
+  follow the system (App → Appearance, or Ctrl+K). Dark also darkens the
+  fractal on screen for night use (saved images keep their colours), and
+  its Midnight switch makes the interface true black.
 - **Ctrl+K** searches everything the app does: actions, every setting,
   recent locations and video projects.
 - Opens and saves `.kfr` location files, and embeds the location in saved

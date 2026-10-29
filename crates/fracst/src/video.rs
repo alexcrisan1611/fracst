@@ -6,7 +6,8 @@
 //! their own rayon pool so that the explorer's renders are not stuck
 //! behind them, and report back over a channel.
 
-use eframe::egui::{self, Color32, ComboBox, DragValue, Slider, TextureHandle, TextureOptions};
+use crate::theme;
+use eframe::egui::{self, ComboBox, DragValue, Slider, TextureHandle, TextureOptions};
 use fracst_core::Colouring;
 use fracst_core::kfr::Location;
 use fracst_video::{
@@ -862,7 +863,7 @@ impl VideoPanel {
         }
         if let Some(reason) = &self.paused {
             ui.colored_label(
-                Color32::from_rgb(230, 170, 90),
+                theme::colours().warn,
                 format!("Paused: {reason}. Keyframes so far are saved; resume here or on the other engine."),
             );
         }
@@ -892,7 +893,7 @@ impl VideoPanel {
             let _ = self.preview_tx.send(PreviewReq { dir, generation: self.generation, t: self.preview_t });
         }
         if let Some(e) = &self.preview_error {
-            ui.colored_label(Color32::from_rgb(230, 110, 90), e);
+            ui.colored_label(theme::colours().error, e);
         }
         if let Some(tex) = &self.preview {
             let size = tex.size_vec2();

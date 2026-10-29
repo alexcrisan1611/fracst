@@ -164,11 +164,15 @@ fn icon_button(ui: &mut egui::Ui, icon: Icon, hint: &str) -> egui::Response {
     if hovered {
         let fill = match icon {
             Icon::Close => Color32::from_rgb(196, 43, 28),
-            _ => Color32::from_white_alpha(22),
+            _ => theme::colours().wash.gamma_multiply(2.75),
         };
         painter.rect_filled(rect, 255, fill);
     }
-    let colour = if hovered { Color32::WHITE } else { theme::TEXT };
+    let colour = match (icon, hovered) {
+        (Icon::Close, true) => Color32::WHITE,
+        (_, true) => theme::colours().text_strong,
+        _ => theme::colours().text,
+    };
     let stroke = Stroke::new(1.2, colour);
     let c = rect.center();
     let s = 4.5;
@@ -183,7 +187,7 @@ fn icon_button(ui: &mut egui::Ui, icon: Icon, hint: &str) -> egui::Response {
             let back = Rect::from_center_size(c + Vec2::new(1.5, -1.5), Vec2::splat(2.0 * s - 2.0));
             let front = Rect::from_center_size(c + Vec2::new(-1.0, 1.0), Vec2::splat(2.0 * s - 2.0));
             painter.rect_stroke(back, 1.5, stroke, egui::StrokeKind::Middle);
-            painter.rect_filled(front, 1.5, theme::CARD_FILL);
+            painter.rect_filled(front, 1.5, theme::colours().card);
             painter.rect_stroke(front, 1.5, stroke, egui::StrokeKind::Middle);
         }
         Icon::Close => {

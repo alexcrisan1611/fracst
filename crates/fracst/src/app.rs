@@ -122,8 +122,8 @@ pub struct App {
     /// A control the palette took you to.
     spotlight: Option<Spotlight>,
     logo: Option<TextureHandle>,
-    /// The theme's accent, which follows the palette.
-    accent: Color32,
+    /// The colour scheme showing, and its accent, which follows the palette.
+    look: (theme::Scheme, Color32),
     /// Testing hook: save a screenshot of the window here once rendering settles, then exit.
     screenshot_to: Option<std::path::PathBuf>,
     /// With the screenshot: first zoom in, held this far through the glide.
@@ -154,9 +154,11 @@ impl App {
         let screenshot_to: Option<std::path::PathBuf> = std::env::var_os("FRACST_SCREENSHOT").map(Into::into);
         let update_check = update::enabled();
         let update_rx = (update_check && screenshot_to.is_none()).then(|| update::spawn_check(cc.egui_ctx.clone()));
+        let prefs = Prefs { read_only: screenshot_to.is_some(), ..Prefs::load() };
         let colouring = Colouring::default();
-        let accent = theme::accent_from(colouring.palette.keys());
-        theme::install(&cc.egui_ctx, accent);
+        let scheme = prefs.appearance.scheme(cc.egui_ctx.system_theme(), prefs.midnight);
+        let look = (scheme, theme::accent_from(colouring.palette.keys(), scheme));
+        theme::install(&cc.egui_ctx, look.0, look.1);
         window::round_corners(cc);
         let logo =
             fracst_core::image::decode_rgba_png(include_bytes!("../../../assets/icon.png")).ok().map(|(rgba, w, h)| {
@@ -207,11 +209,11 @@ impl App {
             update_rx,
             update: None,
             video: VideoPanel::new(cc.egui_ctx.clone()),
-            prefs: Prefs { read_only: screenshot_to.is_some(), ..Prefs::load() },
+            prefs,
             search: Search::default(),
             spotlight: None,
             logo,
-            accent,
+            look,
             screenshot_to,
             screenshot_glide: env("FRACST_SCREENSHOT_GLIDE").and_then(|v| v.trim().parse().ok()),
             screenshot_run: env("FRACST_SCREENSHOT_RUN")
@@ -320,7 +322,8 @@ impl App {
         if self.recolour {
             self.recolour = false;
             if let Some(s) = &self.shown {
-                let rgba = self.colouring.apply(&s.frame);
+                let mut rgba = self.colouring.apply(&s.frame);
+                theme::darken(&mut rgba, self.look.0);
                 let img =
                     egui::ColorImage::from_rgba_unmultiplied([s.frame.width as usize, s.frame.height as usize], &rgba);
                 match &mut self.texture {
@@ -579,7 +582,7 @@ impl App {
 
     fn controls(&mut self, ui: &mut egui::Ui) {
         fn section(ui: &mut egui::Ui, title: &str, open: bool, force: bool, add: impl FnOnce(&mut egui::Ui)) {
-            CollapsingHeader::new(RichText::new(title).font(theme::strong(14.0)).color(theme::TEXT))
+            CollapsingHeader::new(RichText::new(title).font(theme::strong(14.0)).color(theme::colours().text))
                 .default_open(open)
                 .open(force.then_some(true))
                 .show(ui, |ui| {
@@ -611,13 +614,33 @@ impl App {
     }
 
     fn app_ui(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label("Appearance");
+            let current = self.prefs.appearance;
+            ComboBox::from_id_salt("appearance").selected_text(current.name()).show_ui(ui, |ui| {
+                for a in theme::Appearance::ALL {
+                    if ui.selectable_value(&mut self.prefs.appearance, a, a.name()).changed() {
+                        self.prefs.save();
+                    }
+                }
+            });
+        });
+        let dark = self.look.0.is_dark();
+        if ui
+            .add_enabled(dark, egui::Checkbox::new(&mut self.prefs.midnight, "Midnight: true black"))
+            .on_hover_text("Black instead of charcoal around the fractal and behind the cards")
+            .on_disabled_hover_text("For the dark appearance")
+            .changed()
+        {
+            self.prefs.save();
+        }
         if ui.checkbox(&mut self.update_check, "Check for updates at startup").changed() {
             update::set_enabled(self.update_check);
         }
         if ui.button("Controls…").clicked() {
             self.show_help = true;
         }
-        ui.label(RichText::new(format!("fracst {}", env!("CARGO_PKG_VERSION"))).color(theme::TEXT_WEAK));
+        ui.label(RichText::new(format!("fracst {}", env!("CARGO_PKG_VERSION"))).color(theme::colours().text_weak));
     }
 
     fn sync_fields(&mut self) {
@@ -905,7 +928,7 @@ impl App {
                 ui.label("Paused while idle, so the GPU can shut down. The next render reconnects.");
             }
             RemoteStatus::Failed(e) => {
-                ui.colored_label(Color32::from_rgb(230, 110, 90), format!("Remote: {e}"));
+                ui.colored_label(theme::colours().error, format!("Remote: {e}"));
             }
         }
     }
@@ -1036,7 +1059,7 @@ impl App {
                             if let Some(logo) = &self.logo {
                                 ui.add(egui::Image::new((logo.id(), Vec2::splat(18.0))));
                             }
-                            ui.label(RichText::new("Fracst").font(theme::strong(14.5)).color(theme::TEXT));
+                            ui.label(RichText::new("Fracst").font(theme::strong(14.5)).color(theme::colours().text));
                         })
                         .response
                         .interact(Sense::CLICK | Sense::DRAG);
@@ -1065,7 +1088,7 @@ impl App {
                     });
                     let search = egui::Button::new(
                         RichText::new(format!("Search  {}", if cfg!(target_os = "macos") { "⌘K" } else { "Ctrl K" }))
-                            .color(theme::TEXT_WEAK),
+                            .color(theme::colours().text_weak),
                     )
                     .frame_when_inactive(false);
                     if ui.add(search).on_hover_text("Everything fracst can do").clicked() {
@@ -1144,11 +1167,11 @@ impl App {
                 theme::pill().show(ui, |ui| {
                     ui.set_max_width(max_width);
                     ui.horizontal(|ui| {
-                        let mono = |s: String| RichText::new(s).monospace().color(theme::TEXT);
-                        ui.label(RichText::new("Zoom").color(theme::TEXT_WEAK));
+                        let mono = |s: String| RichText::new(s).monospace().color(theme::colours().text);
+                        ui.label(RichText::new("Zoom").color(theme::colours().text_weak));
                         ui.label(mono(format!("{:.4}", self.view.zoom)));
                         ui.add_space(4.0);
-                        ui.label(RichText::new("Iterations").color(theme::TEXT_WEAK));
+                        ui.label(RichText::new("Iterations").color(theme::colours().text_weak));
                         ui.label(mono(self.view.maxiter.to_string()));
                         ui.separator();
                         if let Some((_, p)) = self.worker.current() {
@@ -1168,7 +1191,10 @@ impl App {
                             }
                             ui.ctx().request_repaint_after(Duration::from_millis(100));
                         } else {
-                            ui.add(egui::Label::new(RichText::new(&self.status).color(theme::TEXT_WEAK)).truncate());
+                            ui.add(
+                                egui::Label::new(RichText::new(&self.status).color(theme::colours().text_weak))
+                                    .truncate(),
+                            );
                         }
                     });
                 });
@@ -1311,20 +1337,24 @@ impl App {
 impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         // Transparent where the window's rounded corners are painted.
-        if window::PAINT_CORNERS { [0.0; 4] } else { theme::WINDOW_BG.to_normalized_gamma_f32() }
+        if window::PAINT_CORNERS { [0.0; 4] } else { theme::colours().window.to_normalized_gamma_f32() }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.poll_worker(&ctx);
         self.shortcuts(&ctx);
-        let accent = theme::accent_from(self.colouring.palette.keys());
-        if accent != self.accent {
-            self.accent = accent;
-            theme::set_accent(&ctx, accent);
+        // The system's theme can change while we run.
+        let scheme = self.prefs.appearance.scheme(ctx.system_theme(), self.prefs.midnight);
+        let look = (scheme, theme::accent_from(self.colouring.palette.keys(), scheme));
+        if look != self.look {
+            // The fractal is darker on the dark schemes, and darker still on Midnight.
+            self.recolour |= scheme != self.look.0;
+            self.look = look;
+            theme::apply(&ctx, scheme, look.1);
         }
         let window = ui.max_rect();
-        ui.painter().rect_filled(window, window::window_radius(&ctx), theme::WINDOW_BG);
+        ui.painter().rect_filled(window, window::window_radius(&ctx), theme::colours().window);
         let mut canvas = window.shrink(theme::GAP);
         canvas.min.y = window.top() + window::top_gap();
         ui.scope_builder(egui::UiBuilder::new().max_rect(canvas), |ui| self.canvas(ui));

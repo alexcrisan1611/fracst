@@ -1,6 +1,7 @@
 //! Interface preferences, remembered between runs in `settings.txt` in the
 //! user's configuration directory: one `key=value` per line.
 
+use crate::theme::Appearance;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -10,6 +11,10 @@ pub struct Prefs {
     pub panel: bool,
     /// How long zooms glide for, in milliseconds; 0 for no animation.
     pub glide_ms: u32,
+    /// Dark, Light, or as the system is.
+    pub appearance: Appearance,
+    /// Whether the dark appearance is true black.
+    pub midnight: bool,
     /// Palette entries used lately, most recent first.
     pub recent_commands: Vec<String>,
     /// Location files opened or saved lately, most recent first.
@@ -25,6 +30,8 @@ impl Default for Prefs {
         Prefs {
             panel: true,
             glide_ms: 250,
+            appearance: Appearance::Dark,
+            midnight: false,
             recent_commands: Vec::new(),
             recent_locations: Vec::new(),
             recent_videos: Vec::new(),
@@ -100,6 +107,10 @@ impl Prefs {
             match k.trim() {
                 "panel" => p.panel = v != "off",
                 "glide_ms" => p.glide_ms = v.parse::<u32>().map_or(p.glide_ms, |ms| ms.min(2000)),
+                // Midnight was briefly an appearance of its own.
+                "appearance" if v == "midnight" => (p.appearance, p.midnight) = (Appearance::Dark, true),
+                "appearance" => p.appearance = Appearance::from_key(v).unwrap_or(p.appearance),
+                "midnight" => p.midnight = v == "on",
                 "command" if !v.is_empty() && p.recent_commands.len() < RECENT => p.recent_commands.push(v.into()),
                 "location" if !v.is_empty() && p.recent_locations.len() < RECENT => p.recent_locations.push(v.into()),
                 "video" if !v.is_empty() && p.recent_videos.len() < RECENT => p.recent_videos.push(v.into()),
@@ -110,7 +121,13 @@ impl Prefs {
     }
 
     fn to_text(&self) -> String {
-        let mut text = format!("panel={}\nglide_ms={}\n", if self.panel { "on" } else { "off" }, self.glide_ms);
+        let mut text = format!(
+            "panel={}\nglide_ms={}\nappearance={}\nmidnight={}\n",
+            if self.panel { "on" } else { "off" },
+            self.glide_ms,
+            self.appearance.key(),
+            if self.midnight { "on" } else { "off" }
+        );
         for key in &self.recent_commands {
             text += &format!("command={key}\n");
         }
@@ -145,13 +162,17 @@ mod tests {
         let p = Prefs {
             panel: false,
             glide_ms: 150,
+            appearance: Appearance::System,
+            midnight: true,
             recent_commands: vec!["toggle:slopes".into(), "open".into()],
             recent_locations: vec![PathBuf::from("C:\\deep places\\spiral.kfr"), PathBuf::from("/home/me/a=b.png")],
             recent_videos: vec![PathBuf::from("/home/me/videos/dive")],
             ..Prefs::default()
         };
         assert_eq!(Prefs::parse(&p.to_text()), p);
-        assert_eq!(Prefs::parse("junk\nunknown=1\nglide_ms=lots\n"), Prefs::default());
+        assert_eq!(Prefs::parse("junk\nunknown=1\nglide_ms=lots\nappearance=sepia\n"), Prefs::default());
+        let old = Prefs::parse("appearance=midnight\n");
+        assert_eq!((old.appearance, old.midnight), (Appearance::Dark, true));
     }
 
     #[test]

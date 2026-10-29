@@ -118,7 +118,7 @@ impl Search {
             .pivot(Align2::CENTER_TOP)
             .fixed_pos(egui::pos2(screen.center().x, top))
             .show(ctx, |ui| {
-                theme::card().fill(theme::SOLID_FILL).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
+                theme::card().fill(theme::colours().solid).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
                     ui.set_width(WIDTH.min(screen.width() - 40.0));
                     let edit = ui.add(
                         TextEdit::singleline(&mut self.query)
@@ -135,7 +135,7 @@ impl Search {
                     ui.separator();
                     if results.is_empty() {
                         ui.add_space(6.0);
-                        ui.label(RichText::new("Nothing matches.").color(theme::TEXT_WEAK));
+                        ui.label(RichText::new("Nothing matches.").color(theme::colours().text_weak));
                         ui.add_space(6.0);
                         return;
                     }
@@ -146,7 +146,7 @@ impl Search {
                             let group = if recent { "Recent" } else { entries[i].group };
                             if self.query.is_empty() && last_group != Some(group) {
                                 ui.add_space(if last_group.is_some() { 6.0 } else { 2.0 });
-                                ui.label(RichText::new(group).small().color(theme::TEXT_WEAK));
+                                ui.label(RichText::new(group).small().color(theme::colours().text_weak));
                                 last_group = Some(group);
                             }
                             let response = entry_row(ui, &entries[i], row == self.selected, !self.query.is_empty());
@@ -186,7 +186,7 @@ fn entry_row<T>(ui: &mut egui::Ui, entry: &Entry<T>, selected: bool, show_group:
             egui::StrokeKind::Inside,
         );
     } else if response.hovered() {
-        painter.rect_filled(rect, CornerRadius::same(7), Color32::from_white_alpha(8));
+        painter.rect_filled(rect, CornerRadius::same(7), theme::colours().wash);
     }
     let mut x = rect.left() + 10.0;
     let y = rect.center().y;
@@ -194,16 +194,17 @@ fn entry_row<T>(ui: &mut egui::Ui, entry: &Entry<T>, selected: bool, show_group:
     if entry.state != State::Action {
         let on = entry.state == State::On;
         let track = Rect::from_center_size(egui::pos2(x + 11.0, y), Vec2::new(22.0, 12.0));
-        let fill = if on { accent } else { Color32::from_gray(70) };
+        let fill = if on { accent } else { theme::colours().muted };
         painter.rect_filled(track, CornerRadius::same(6), fill);
         let knob = if on { track.right() - 6.0 } else { track.left() + 6.0 };
         painter.circle_filled(egui::pos2(knob, y), 4.5, Color32::WHITE);
         x += 32.0;
     }
-    let title = painter.layout_no_wrap(entry.title.clone(), egui::FontId::proportional(14.0), theme::TEXT);
+    let title = painter.layout_no_wrap(entry.title.clone(), egui::FontId::proportional(14.0), theme::colours().text);
     let mut right = rect.right() - 10.0;
     if let Some(shortcut) = &entry.shortcut {
-        let galley = painter.layout_no_wrap(shortcut.clone(), egui::FontId::monospace(11.5), theme::TEXT_WEAK);
+        let galley =
+            painter.layout_no_wrap(shortcut.clone(), egui::FontId::monospace(11.5), theme::colours().text_weak);
         let cap = Rect::from_min_size(
             egui::pos2(right - galley.size().x - 12.0, y - galley.size().y / 2.0 - 3.0),
             galley.size() + Vec2::new(12.0, 6.0),
@@ -211,20 +212,24 @@ fn entry_row<T>(ui: &mut egui::Ui, entry: &Entry<T>, selected: bool, show_group:
         painter.rect_stroke(
             cap,
             CornerRadius::same(5),
-            Stroke::new(1.0, Color32::from_gray(70)),
+            Stroke::new(1.0, theme::colours().muted),
             egui::StrokeKind::Inside,
         );
-        painter.galley(cap.min + Vec2::new(6.0, 3.0), galley, theme::TEXT_WEAK);
+        painter.galley(cap.min + Vec2::new(6.0, 3.0), galley, theme::colours().text_weak);
         right = cap.left() - 8.0;
     }
     if show_group {
-        let galley = painter.layout_no_wrap(entry.group.to_owned(), egui::FontId::proportional(12.0), theme::TEXT_WEAK);
+        let galley = painter.layout_no_wrap(
+            entry.group.to_owned(),
+            egui::FontId::proportional(12.0),
+            theme::colours().text_weak,
+        );
         let pos = egui::pos2(right - galley.size().x, y - galley.size().y / 2.0);
         right = pos.x - 8.0;
-        painter.galley(pos, galley, theme::TEXT_WEAK);
+        painter.galley(pos, galley, theme::colours().text_weak);
     }
     let clip = Rect::from_min_max(rect.min, egui::pos2(right, rect.max.y));
-    painter.with_clip_rect(clip).galley(egui::pos2(x, y - title.size().y / 2.0), title, theme::TEXT);
+    painter.with_clip_rect(clip).galley(egui::pos2(x, y - title.size().y / 2.0), title, theme::colours().text);
     response
 }
 
