@@ -11,7 +11,10 @@ automatic iteration limits and minibrot-aware references.
 - Palette colouring: 1024-entry palettes interpolated from key colours,
   `IterDiv`, `ColorOffset`, transfer functions, and neighbour-difference slope shading.
 - Newton's method minibrot finder ("jump to the nearest minibrot").
-- CLI for batch renders, supersampling and zoom-out sequences for videos.
+- Zoom videos from the app or the CLI: keyframes rendered here or on a remote
+  GPU (resumable), smooth interpolation, a speed curve, animated colours and
+  audio, encoded with ffmpeg (which fracst can download for you).
+- CLI for batch renders and supersampling.
 
 ![fracst exploring a spiral at zoom 2.2e238](assets/screenshot.png)
 
@@ -163,7 +166,7 @@ The side panel covers:
   `IterDiv`, offset, transfer function, slopes and interior colour.
 - **Rendering**: resolution scale, BLA, interior detection, reference snapping,
   bailout and reference reuse.
-- **Export**: any size with supersampling.
+- **Export**: any size with supersampling, and **Make video…** (see below).
 - **Remote GPU**: render on a `fracst-server`, such as a cloud GPU (see below).
 - **Statistics**: per-stage timings, BLA skip factor and iteration range.
 
@@ -182,11 +185,47 @@ fracst-cli --re -0.7436438870371587 --im 0.1318259042053120 --zoom 1e12 -i 50000
 # Jump to the nearest minibrot and frame it at 1/4 of the image height
 fracst-cli location.kfr --find-minibrot --mini-zoom 0.25 --save-kfr -o mini.png
 
-# Zoom-out sequence for videos (reuses the reference orbit throughout)
+# Zoom-out PNG sequence (reuses the reference orbit throughout)
 fracst-cli deep.kfr --zoom-out 500 --zoom-out-factor 2 -o frames/zoom.png
 ```
 
 `fracst-cli --help` lists every option.
+
+### Zoom videos
+
+**Make video…** (under Export, or in the File menu) sets up a video from the
+whole set into the current location. fracst renders one *keyframe* per
+doubling of the zoom, from the location outwards, here or on the remote GPU,
+in the background while you keep exploring. Each keyframe is saved to a
+project folder as soon as it is done, so a job can pause, crash or be cut off
+by a gateway's usage limit and resume where it stopped. **Estimate** renders
+the deepest (slowest) keyframe first and estimates the rest.
+
+The keyframes keep raw iteration data, so the colours are applied when the
+video is encoded: change the palette, add palette cycling or colour keys
+(colours at moments of the video, eased in between), change the length or the
+speed curve, add music, and encode again without rendering anything. A
+preview slider shows any moment before encoding. Each frame stacks the
+keyframes around its zoom, deepest on top with soft edges, so the zoom is
+smooth and the centre stays sharp.
+
+Encoding uses ffmpeg (H.264, H.265, AV1 or ProRes). If none is found, fracst
+offers to download a pinned, checksum-verified static build into its data
+folder; without one it writes PNG frames instead.
+
+```
+# A 1080p60 video, one zoom doubling per second at full speed
+fracst-cli video deep.kfr -W 1920 -H 1080 --fps 60 --per-doubling 1 -o deep.mp4
+
+# As long as the music, keyframes on a remote GPU, colours cycling
+fracst-cli video deep.kfr --audio song.flac --fit-audio --cycle 30 --remote wss://…/stream
+
+# Resume a paused project, or re-encode it with other colours
+fracst-cli video --project deep-video --colour-key "0:iter_div=0.02" --colour-key "60:iter_div=0.5"
+```
+
+See [docs/video.md](docs/video.md) for how it works and every setting.
+`--zoom-out N` still writes a plain PNG sequence of N frames.
 
 ### Remote GPU (`fracst-server`)
 
@@ -243,6 +282,7 @@ crates/fracst-cuda   CUDA pixel engine: kernel/fracst.cuh (the pixel loop, also
                      compiled for the host in tests), NVRTC compilation, check.rs
 crates/fracst-remote remote protocol, lossless frame compression, client
 crates/fracst-server WebSocket render server (CUDA when available)
+crates/fracst-video  zoom videos: projects, keyframes, compositing, timeline, ffmpeg
 deploy/fal           container image for fracst-server, and the fal.ai app
 deploy/modal         the Modal app
 gateway              Cloudflare Worker: fracst keys, usage limits, relay to the GPU
