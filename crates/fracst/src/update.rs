@@ -1,6 +1,6 @@
 //! Checks GitHub once at startup for a newer release. Only the release's
 //! version is fetched; nothing about this computer is sent. Turned off from
-//! the Help menu (remembered in `update-check.txt` in the configuration
+//! the App section of the settings (remembered in `update-check.txt` in the configuration
 //! directory) or with `FRACST_NO_UPDATE_CHECK=1`.
 
 use std::sync::mpsc::{Receiver, channel};

@@ -73,7 +73,7 @@ jobs:
           # A tarball with an install script, for any distribution...
           dist="fracst-$VERSION-linux-x86_64"
           mkdir "$dist"
-          cp target/release/fracst target/release/fracst-cli target/release/fracst-server README.md LICENSE-MIT LICENSE-APACHE "$dist/"
+          cp target/release/fracst target/release/fracst-cli target/release/fracst-server README.md LICENSE-MIT LICENSE-APACHE assets/fonts/*-LICENSE.txt "$dist/"
           cp packaging/linux/install.sh packaging/linux/fracst.desktop packaging/linux/fracst.xml "$dist/"
           cp assets/icon.png "$dist/fracst.png"
           tar czf "$dist.tar.gz" "$dist"
@@ -83,7 +83,7 @@ jobs:
           install -Dm644 packaging/linux/fracst.desktop "$deb/usr/share/applications/fracst.desktop"
           install -Dm644 packaging/linux/fracst.xml "$deb/usr/share/mime/packages/fracst.xml"
           install -Dm644 assets/icon.png "$deb/usr/share/icons/hicolor/512x512/apps/fracst.png"
-          install -Dm644 -t "$deb/usr/share/doc/fracst" README.md LICENSE-MIT LICENSE-APACHE
+          install -Dm644 -t "$deb/usr/share/doc/fracst" README.md LICENSE-MIT LICENSE-APACHE assets/fonts/*-LICENSE.txt
           mkdir -p "$deb/DEBIAN"
           cat > "$deb/DEBIAN/control" <<CONTROL
           Package: fracst
@@ -110,7 +110,7 @@ jobs:
           # A portable zip...
           dist="fracst-$VERSION-windows-x86_64"
           mkdir "$dist"
-          cp target/release/fracst.exe target/release/fracst-cli.exe target/release/fracst-server.exe README.md LICENSE-MIT LICENSE-APACHE "$dist/"
+          cp target/release/fracst.exe target/release/fracst-cli.exe target/release/fracst-server.exe README.md LICENSE-MIT LICENSE-APACHE assets/fonts/*-LICENSE.txt "$dist/"
           7z a "$dist.zip" "$dist"
           # ...and an installer (Inno Setup comes with the runner image).
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" -Q \
@@ -132,7 +132,7 @@ jobs:
           lipo -create -output "$dist/fracst-cli" target/{aarch64,x86_64}-apple-darwin/release/fracst-cli
           cp assets/icon.icns "$contents/Resources/fracst.icns"
           sed "s/@VERSION@/$PKG_VERSION/g" .github/macos/Info.plist > "$contents/Info.plist"
-          cp README.md LICENSE-MIT LICENSE-APACHE "$dist/"
+          cp README.md LICENSE-MIT LICENSE-APACHE assets/fonts/*-LICENSE.txt "$dist/"
           # Ad-hoc signatures: not notarised, but required to run on Apple Silicon.
           codesign --force --deep --sign - "$dist/fracst.app"
           codesign --force --sign - "$dist/fracst-cli"

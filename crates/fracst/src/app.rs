@@ -1,10 +1,12 @@
+use crate::prefs::Prefs;
 use crate::remote_config;
+use crate::theme;
 use crate::update::{self, Release};
 use crate::video::VideoPanel;
 use crate::worker::{Outcome, RemoteConfig, RemoteStatus, Task, Worker};
 use eframe::egui::{
-    self, CollapsingHeader, Color32, ComboBox, DragValue, Key, PointerButton, Pos2, Rect, Sense, Slider, StrokeKind,
-    TextEdit, TextureHandle, TextureOptions, Vec2, ViewportCommand,
+    self, Align2, CollapsingHeader, Color32, ComboBox, DragValue, Id, Key, Modifiers, PointerButton, Pos2, Rect,
+    RichText, Sense, Slider, StrokeKind, TextEdit, TextureHandle, TextureId, TextureOptions, Vec2, epaint::RectShape,
 };
 use fracst_core::{Colouring, FloatExp, Frame, Palette, Progress, Settings, Slopes, Transfer, View, kfr};
 use std::path::Path;
@@ -15,6 +17,11 @@ use std::time::{Duration, Instant};
 /// stops billing; the next render reconnects (in about a second while the
 /// GPU is still up).
 const REMOTE_IDLE: Duration = Duration::from_secs(60);
+
+/// Width of the floating settings card.
+const PANEL_WIDTH: f32 = 340.0;
+/// Space between the canvas card's edge and what floats over it.
+const INSET: f32 = 12.0;
 
 struct Shown {
     view: View,
@@ -79,6 +86,10 @@ pub struct App {
     /// A newer release, until dismissed.
     update: Option<Release>,
     video: VideoPanel,
+    prefs: Prefs,
+    logo: Option<TextureHandle>,
+    /// The theme's accent, which follows the palette.
+    accent: Color32,
     /// Testing hook: save a screenshot of the window here once rendering settles, then exit.
     screenshot_to: Option<std::path::PathBuf>,
     screenshot_frames: u32,
@@ -101,11 +112,19 @@ impl App {
         let screenshot_to: Option<std::path::PathBuf> = std::env::var_os("FRACST_SCREENSHOT").map(Into::into);
         let update_check = update::enabled();
         let update_rx = (update_check && screenshot_to.is_none()).then(|| update::spawn_check(cc.egui_ctx.clone()));
+        let colouring = Colouring::default();
+        let accent = theme::accent_from(colouring.palette.keys());
+        theme::install(&cc.egui_ctx, accent);
+        let logo =
+            fracst_core::image::decode_rgba_png(include_bytes!("../../../assets/icon.png")).ok().map(|(rgba, w, h)| {
+                let img = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+                cc.egui_ctx.load_texture("logo", img, TextureOptions::LINEAR)
+            });
         let mut app = App {
             worker: Worker::spawn(cc.egui_ctx.clone()),
             view: View::default(),
             settings: Settings { auto_iterations: true, ..Settings::default() },
-            colouring: Colouring::default(),
+            colouring,
             shown: None,
             texture: None,
             recolour: false,
@@ -136,6 +155,9 @@ impl App {
             update_rx,
             update: None,
             video: VideoPanel::new(cc.egui_ctx.clone()),
+            prefs: Prefs::load(),
+            logo,
+            accent,
             screenshot_to,
             screenshot_frames: 0,
         };
@@ -291,15 +313,15 @@ impl App {
             // so the region shows the middle of what was on screen.
             self.view.zoom = self.view.zoom * FloatExp::from(h as f64 / old_height as f64);
         }
+        ui.painter().rect_filled(full, theme::RADIUS, Color32::BLACK);
         if self.region.is_some() {
-            ui.painter().rect_stroke(rect, 0.0, (1.0, Color32::from_gray(90)), StrokeKind::Outside);
+            ui.painter().rect_stroke(rect, theme::RADIUS, (1.0, Color32::from_gray(90)), StrokeKind::Outside);
         }
         let response = ui.allocate_rect(rect, Sense::click_and_drag());
 
         if let (Some(tex), Some(shown)) = (&self.texture, &self.shown) {
             let target = self.placement(rect, &shown.view, px_per_point);
-            let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
-            ui.painter().with_clip_rect(rect).image(tex.id(), target, uv, Color32::WHITE);
+            paint_rounded(ui.painter(), rect, target, tex.id(), Color32::WHITE);
         }
 
         let to_pixels =
@@ -351,13 +373,31 @@ impl App {
     // ---- side panel -----------------------------------------------------------
 
     fn controls(&mut self, ui: &mut egui::Ui) {
-        CollapsingHeader::new("Location").default_open(true).show(ui, |ui| self.location_ui(ui));
-        CollapsingHeader::new("Navigation").default_open(true).show(ui, |ui| self.navigation_ui(ui));
-        CollapsingHeader::new("Colour").default_open(true).show(ui, |ui| self.colour_ui(ui));
-        CollapsingHeader::new("Rendering").default_open(false).show(ui, |ui| self.rendering_ui(ui));
-        CollapsingHeader::new("Remote GPU").default_open(!self.remote_url.is_empty()).show(ui, |ui| self.remote_ui(ui));
-        CollapsingHeader::new("Export").default_open(false).show(ui, |ui| self.export_ui(ui));
-        CollapsingHeader::new("Statistics").default_open(true).show(ui, |ui| self.stats_ui(ui));
+        fn section(ui: &mut egui::Ui, title: &str, open: bool, add: impl FnOnce(&mut egui::Ui)) {
+            CollapsingHeader::new(RichText::new(title).font(theme::strong(14.0)).color(theme::TEXT))
+                .default_open(open)
+                .show(ui, |ui| {
+                    add(ui);
+                    ui.add_space(4.0);
+                });
+        }
+        section(ui, "Location", true, |ui| self.location_ui(ui));
+        section(ui, "Navigation", true, |ui| self.navigation_ui(ui));
+        section(ui, "Colour", true, |ui| self.colour_ui(ui));
+        section(ui, "Rendering", false, |ui| self.rendering_ui(ui));
+        section(ui, "Remote GPU", !self.remote_url.is_empty(), |ui| self.remote_ui(ui));
+        section(ui, "Export", false, |ui| self.export_ui(ui));
+        section(ui, "Statistics", true, |ui| self.stats_ui(ui));
+        section(ui, "App", false, |ui| self.app_ui(ui));
+    }
+
+    fn app_ui(&mut self, ui: &mut egui::Ui) {
+        if ui.checkbox(&mut self.update_check, "Check for updates at startup").changed() {
+            update::set_enabled(self.update_check);
+        }
+        if ui.button("Controls…").clicked() {
+            self.show_help = true;
+        }
     }
 
     fn sync_fields(&mut self) {
@@ -731,86 +771,145 @@ impl App {
 
     // ---- menus, windows, status ------------------------------------------------
 
-    fn menu(&mut self, ui: &mut egui::Ui) {
-        egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                if ui.button("Open location…  (Ctrl+O)").clicked() {
-                    self.open_dialog();
-                }
-                if ui.button("Save location…  (Ctrl+S)").clicked() {
-                    self.save_dialog();
-                }
-                if ui.button("Export PNG…  (Ctrl+E)").clicked() {
-                    self.export_dialog();
-                }
-                ui.separator();
-                if ui.button("Make video…").clicked() {
-                    self.make_video();
-                }
-                if ui.button("Open video project…").clicked()
-                    && let Some(dir) = rfd::FileDialog::new().set_title("Video project folder").pick_folder()
-                {
-                    self.open_video_project(&dir);
-                }
-                ui.separator();
-                if ui.button("Quit").clicked() {
-                    ui.ctx().send_viewport_cmd(ViewportCommand::Close);
-                }
-            });
-            ui.menu_button("Help", |ui| {
-                if ui.button("Controls").clicked() {
-                    self.show_help = true;
-                }
-                ui.separator();
-                if ui.checkbox(&mut self.update_check, "Check for updates at startup").changed() {
-                    update::set_enabled(self.update_check);
-                }
-            });
-            if let Some(release) = self.update_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
-                self.update = Some(release);
-            }
-            if let Some(release) = &self.update {
-                let mut dismiss = false;
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    dismiss = ui.small_button("×").on_hover_text("Dismiss").clicked();
-                    ui.hyperlink_to(format!("Fracst {} is available", release.version), &release.url)
-                        .on_hover_text("Open the release page to download it");
+    /// The floating pill at the top left: the wordmark and the main actions.
+    fn toolbar(&mut self, ctx: &egui::Context, canvas: Rect) {
+        egui::Area::new(Id::unique("toolbar")).fixed_pos(canvas.min + Vec2::splat(INSET)).show(ctx, |ui| {
+            theme::pill().show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    if let Some(logo) = &self.logo {
+                        ui.add(egui::Image::new((logo.id(), Vec2::splat(18.0))));
+                    }
+                    ui.label(RichText::new("fracst").font(theme::strong(14.5)).color(theme::TEXT));
+                    ui.add_space(6.0);
+                    let tool = |ui: &mut egui::Ui, text: &str, hint: &str| {
+                        ui.add(egui::Button::new(text).frame_when_inactive(false)).on_hover_text(hint).clicked()
+                    };
+                    if tool(ui, "Open", "Open a location or video project  (Ctrl+O)") {
+                        self.open_dialog();
+                    }
+                    if tool(ui, "Save", "Save the location  (Ctrl+S)") {
+                        self.save_dialog();
+                    }
+                    if tool(ui, "Export", "Export a PNG  (Ctrl+E)") && self.blocking.is_none() {
+                        self.export_dialog();
+                    }
+                    let video = egui::Button::new("Video").frame_when_inactive(false);
+                    egui::containers::menu::MenuButton::from_button(video).ui(ui, |ui| {
+                        if ui.button("Make video…").clicked() {
+                            self.make_video();
+                        }
+                        if ui.button("Open video project…").clicked()
+                            && let Some(dir) = rfd::FileDialog::new().set_title("Video project folder").pick_folder()
+                        {
+                            self.open_video_project(&dir);
+                        }
+                    });
+                    let panel = if self.prefs.panel { "Hide settings  (Tab)" } else { "Show settings  (Tab)" };
+                    if ui
+                        .add(egui::Button::new("⚙").frame_when_inactive(false).selected(self.prefs.panel))
+                        .on_hover_text(panel)
+                        .clicked()
+                    {
+                        self.toggle_panel();
+                    }
+                    if tool(ui, "?", "Controls") {
+                        self.show_help = true;
+                    }
+                    if let Some(release) = self.update_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+                        self.update = Some(release);
+                    }
+                    if let Some(release) = &self.update {
+                        ui.separator();
+                        ui.hyperlink_to(format!("{} is out", release.version), &release.url)
+                            .on_hover_text("Open the release page to download it");
+                        if ui.small_button("×").on_hover_text("Dismiss").clicked() {
+                            self.update = None;
+                            self.update_rx = None;
+                        }
+                    }
                 });
-                if dismiss {
-                    self.update = None;
-                    self.update_rx = None;
-                }
-            }
+            });
         });
     }
 
-    fn status_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.label(format!("Zoom {:.4}", self.view.zoom));
-            ui.separator();
-            ui.label(format!("{} iterations", self.view.maxiter));
-            ui.separator();
-            if let Some((_, p)) = self.worker.current() {
-                let (stage, frac) = p.snapshot();
-                let label = match (self.blocking, stage) {
-                    (Some((_, l)), _) => l,
-                    (None, Progress::REFERENCE) => "Reference orbit",
-                    (None, Progress::BLA) => "BLA table",
-                    (None, Progress::PIXELS) => "Pixels",
-                    _ => "Starting",
-                };
-                ui.add(egui::ProgressBar::new(frac as f32).desired_width(180.0).text(label));
-                if ui.small_button("Cancel").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
-                    self.worker.cancel();
-                    self.blocking = None;
-                    // Do not immediately resubmit the cancelled render.
-                    self.requested = Some((self.view.clone(), self.settings.clone()));
-                }
-                ui.ctx().request_repaint_after(Duration::from_millis(100));
-            } else {
-                ui.label(&self.status);
-            }
+    fn toggle_panel(&mut self) {
+        self.prefs.panel = !self.prefs.panel;
+        self.prefs.save();
+    }
+
+    /// The floating settings card on the right, which slides away with Tab.
+    fn side_panel(&mut self, ctx: &egui::Context, canvas: Rect, top: f32) {
+        let shown = ctx.animate_bool_with_time_and_easing(
+            Id::unique("panel-shown"),
+            self.prefs.panel,
+            0.2,
+            egui::emath::easing::cubic_out,
+        );
+        if shown == 0.0 {
+            return;
+        }
+        let slide = (1.0 - shown) * (PANEL_WIDTH + 2.0 * INSET);
+        let pos = Pos2::new(canvas.right() - INSET - PANEL_WIDTH + slide, top);
+        let height = (canvas.bottom() - INSET - top).max(120.0);
+        egui::Area::new(Id::unique("settings")).fixed_pos(pos).show(ctx, |ui| {
+            ui.multiply_opacity(shown);
+            theme::card().inner_margin(egui::Margin { left: 12, right: 6, top: 8, bottom: 8 }).show(ui, |ui| {
+                let inner = Vec2::new(PANEL_WIDTH - 18.0, height - 16.0);
+                ui.set_min_size(inner);
+                ui.set_max_width(inner.x);
+                egui::ScrollArea::vertical().max_height(inner.y).auto_shrink(false).show(ui, |ui| {
+                    ui.add_space(2.0);
+                    ui.set_max_width(inner.x - 10.0);
+                    self.controls(ui);
+                });
+            });
         });
+    }
+
+    /// The floating pill at the bottom left: where we are, and what is running.
+    fn status_pill(&mut self, ctx: &egui::Context, canvas: Rect) {
+        let panel = if self.prefs.panel { PANEL_WIDTH + INSET } else { 0.0 };
+        let max_width = (canvas.width() - 2.0 * INSET - panel - 24.0).max(200.0);
+        egui::Area::new(Id::unique("status"))
+            .pivot(Align2::LEFT_BOTTOM)
+            .fixed_pos(Pos2::new(canvas.left() + INSET, canvas.bottom() - INSET))
+            .show(ctx, |ui| {
+                theme::pill().show(ui, |ui| {
+                    ui.set_max_width(max_width);
+                    ui.horizontal(|ui| {
+                        let mono = |s: String| RichText::new(s).monospace().color(theme::TEXT);
+                        ui.label(RichText::new("Zoom").color(theme::TEXT_WEAK));
+                        ui.label(mono(format!("{:.4}", self.view.zoom)));
+                        ui.add_space(4.0);
+                        ui.label(RichText::new("Iterations").color(theme::TEXT_WEAK));
+                        ui.label(mono(self.view.maxiter.to_string()));
+                        ui.separator();
+                        if let Some((_, p)) = self.worker.current() {
+                            let (stage, frac) = p.snapshot();
+                            let label = match (self.blocking, stage) {
+                                (Some((_, l)), _) => l,
+                                (None, Progress::REFERENCE) => "Reference orbit",
+                                (None, Progress::BLA) => "BLA table",
+                                (None, Progress::PIXELS) => "Pixels",
+                                _ => "Starting",
+                            };
+                            ui.add(egui::ProgressBar::new(frac as f32).desired_width(170.0).text(label));
+                            if ui.small_button("Cancel").on_hover_text("Esc").clicked()
+                                || ui.input(|i| i.key_pressed(Key::Escape))
+                            {
+                                self.worker.cancel();
+                                self.blocking = None;
+                                // Do not immediately resubmit the cancelled render.
+                                self.requested = Some((self.view.clone(), self.settings.clone()));
+                            }
+                            ui.ctx().request_repaint_after(Duration::from_millis(100));
+                        } else {
+                            ui.add(egui::Label::new(RichText::new(&self.status).color(theme::TEXT_WEAK)).truncate());
+                        }
+                    });
+                });
+            });
     }
 
     fn location_window(&mut self, ctx: &egui::Context) {
@@ -850,6 +949,7 @@ impl App {
             ui.label("Mouse wheel — zoom around the cursor");
             ui.label("Drag — pan");
             ui.label("Esc — cancel the current render");
+            ui.label("Tab — show or hide the settings");
             ui.label("Ctrl+O / Ctrl+S / Ctrl+E — open, save location, export PNG");
         });
     }
@@ -921,6 +1021,11 @@ impl App {
         if export && self.blocking.is_none() {
             self.export_dialog();
         }
+        // Tab moves between text fields while one is focused; otherwise it
+        // shows and hides the settings.
+        if ctx.memory(|m| m.focused().is_none()) && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab)) {
+            self.toggle_panel();
+        }
         let dropped: Vec<std::path::PathBuf> =
             ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
         if let Some(path) = dropped.first() {
@@ -934,12 +1039,18 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.poll_worker(&ctx);
         self.shortcuts(&ctx);
-        egui::Panel::top("menu").show(ui, |ui| self.menu(ui));
-        egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
-        egui::Panel::right("controls").default_size(340.0).show(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| self.controls(ui));
-        });
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(Color32::BLACK)).show(ui, |ui| self.canvas(ui));
+        let accent = theme::accent_from(self.colouring.palette.keys());
+        if accent != self.accent {
+            self.accent = accent;
+            theme::set_accent(&ctx, accent);
+        }
+        let window = ui.max_rect();
+        ui.painter().rect_filled(window, 0.0, theme::WINDOW_BG);
+        let canvas = window.shrink(theme::GAP);
+        ui.scope_builder(egui::UiBuilder::new().max_rect(canvas), |ui| self.canvas(ui));
+        self.toolbar(&ctx, canvas);
+        self.status_pill(&ctx, canvas);
+        self.side_panel(&ctx, canvas, canvas.top() + INSET);
         if self.show_location {
             self.location_window(&ctx);
         }
@@ -971,4 +1082,16 @@ impl eframe::App for App {
             ctx.request_repaint();
         }
     }
+}
+
+/// Paint the part of a texture placed at `target` that falls inside `clip`,
+/// with rounded corners.
+fn paint_rounded(painter: &egui::Painter, clip: Rect, target: Rect, texture: TextureId, tint: Color32) {
+    let visible = clip.intersect(target);
+    if !visible.is_positive() {
+        return;
+    }
+    let to_uv = |p: Pos2| Pos2::new((p.x - target.min.x) / target.width(), (p.y - target.min.y) / target.height());
+    let uv = Rect::from_min_max(to_uv(visible.min), to_uv(visible.max));
+    painter.add(RectShape::filled(visible, theme::RADIUS, tint).with_texture(texture, uv));
 }
