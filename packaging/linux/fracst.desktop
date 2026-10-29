@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=fracst
+Name=Fracst
 GenericName=Mandelbrot explorer
 Comment=Fast deep-zoom Mandelbrot explorer
 Exec=fracst %f
