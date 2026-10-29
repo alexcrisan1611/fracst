@@ -154,6 +154,11 @@ impl VideoPanel {
         self.project.as_ref().map(|p| &p.location)
     }
 
+    /// The open project's folder.
+    pub fn project_dir(&self) -> Option<&Path> {
+        self.project.as_ref().map(|p| p.dir.as_path())
+    }
+
     pub fn busy(&self) -> bool {
         self.job.is_some()
     }

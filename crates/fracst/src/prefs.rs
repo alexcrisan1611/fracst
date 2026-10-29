@@ -1,7 +1,7 @@
 //! Interface preferences, remembered between runs in `settings.txt` in the
 //! user's configuration directory: one `key=value` per line.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -12,13 +12,24 @@ pub struct Prefs {
     pub glide_ms: u32,
     /// Palette entries used lately, most recent first.
     pub recent_commands: Vec<String>,
+    /// Location files opened or saved lately, most recent first.
+    pub recent_locations: Vec<PathBuf>,
+    /// Video project folders used lately, most recent first.
+    pub recent_videos: Vec<PathBuf>,
     /// Not saved: for test runs, which must not change the user's settings.
     pub read_only: bool,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Prefs { panel: true, glide_ms: 250, recent_commands: Vec::new(), read_only: false }
+        Prefs {
+            panel: true,
+            glide_ms: 250,
+            recent_commands: Vec::new(),
+            recent_locations: Vec::new(),
+            recent_videos: Vec::new(),
+            read_only: false,
+        }
     }
 }
 
@@ -58,6 +69,25 @@ impl Prefs {
         self.save();
     }
 
+    /// Note a location file as just used.
+    pub fn used_location(&mut self, path: &Path) {
+        remember(&mut self.recent_locations, absolute(path));
+        self.save();
+    }
+
+    /// Note a video project folder as just used.
+    pub fn used_video(&mut self, dir: &Path) {
+        remember(&mut self.recent_videos, absolute(dir));
+        self.save();
+    }
+
+    /// Forget a recent file or folder that has gone.
+    pub fn forget(&mut self, path: &Path) {
+        self.recent_locations.retain(|p| p != path);
+        self.recent_videos.retain(|p| p != path);
+        self.save();
+    }
+
     pub fn glide(&self) -> Duration {
         Duration::from_millis(self.glide_ms as u64)
     }
@@ -71,6 +101,8 @@ impl Prefs {
                 "panel" => p.panel = v != "off",
                 "glide_ms" => p.glide_ms = v.parse::<u32>().map_or(p.glide_ms, |ms| ms.min(2000)),
                 "command" if !v.is_empty() && p.recent_commands.len() < RECENT => p.recent_commands.push(v.into()),
+                "location" if !v.is_empty() && p.recent_locations.len() < RECENT => p.recent_locations.push(v.into()),
+                "video" if !v.is_empty() && p.recent_videos.len() < RECENT => p.recent_videos.push(v.into()),
                 _ => {}
             }
         }
@@ -82,8 +114,19 @@ impl Prefs {
         for key in &self.recent_commands {
             text += &format!("command={key}\n");
         }
+        for path in &self.recent_locations {
+            text += &format!("location={}\n", path.display());
+        }
+        for dir in &self.recent_videos {
+            text += &format!("video={}\n", dir.display());
+        }
         text
     }
+}
+
+/// Recent places are kept whole, so they open from anywhere.
+fn absolute(path: &Path) -> PathBuf {
+    std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Put `item` first in a recent list, without duplicates.
@@ -103,6 +146,8 @@ mod tests {
             panel: false,
             glide_ms: 150,
             recent_commands: vec!["toggle:slopes".into(), "open".into()],
+            recent_locations: vec![PathBuf::from("C:\\deep places\\spiral.kfr"), PathBuf::from("/home/me/a=b.png")],
+            recent_videos: vec![PathBuf::from("/home/me/videos/dive")],
             ..Prefs::default()
         };
         assert_eq!(Prefs::parse(&p.to_text()), p);
