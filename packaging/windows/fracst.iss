@@ -16,15 +16,15 @@
 
 [Setup]
 AppId={{6C1E2F43-8B0A-4E52-9D7C-3F1A5B0E7D21}
-AppName=fracst
+AppName=Fracst
 AppVersion={#AppVersion}
-AppVerName=fracst {#AppVersion}
+AppVerName=Fracst {#AppVersion}
 AppPublisher=Alex Crișan
 AppPublisherURL=https://github.com/alexcrisan1611/fracst
 AppSupportURL=https://github.com/alexcrisan1611/fracst/issues
 AppUpdatesURL=https://github.com/alexcrisan1611/fracst/releases
 DefaultDirName={autopf}\fracst
-DefaultGroupName=fracst
+DefaultGroupName=Fracst
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
@@ -44,7 +44,7 @@ WizardStyle=modern
 [Tasks]
 Name: desktopicon; Description: "Create a &desktop shortcut"; Flags: unchecked
 Name: addtopath; Description: "Add fracst-cli and fracst-server to &PATH"
-Name: kfr; Description: "Open .&kfr location files with fracst"
+Name: kfr; Description: "Open .&kfr location files with Fracst"
 
 [Files]
 Source: "{#SourceDir}\fracst.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -54,19 +54,25 @@ Source: "..\..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\LICENSE-MIT"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\LICENSE-APACHE"; DestDir: "{app}"; Flags: ignoreversion
 
+[InstallDelete]
+; Earlier versions named the shortcuts "fracst"; overwriting them would keep
+; that lowercase file name, so remove them and create them afresh.
+Type: files; Name: "{autoprograms}\fracst.lnk"
+Type: files; Name: "{autodesktop}\fracst.lnk"
+
 [Icons]
-Name: "{autoprograms}\fracst"; Filename: "{app}\fracst.exe"
-Name: "{autodesktop}\fracst"; Filename: "{app}\fracst.exe"; Tasks: desktopicon
+Name: "{autoprograms}\Fracst"; Filename: "{app}\fracst.exe"; Comment: "Interactive deep-zoom Mandelbrot explorer"
+Name: "{autodesktop}\Fracst"; Filename: "{app}\fracst.exe"; Comment: "Interactive deep-zoom Mandelbrot explorer"; Tasks: desktopicon
 
 [Registry]
 ; HKA is HKLM for an all-users install and HKCU otherwise.
 Root: HKA; Subkey: "Software\Classes\.kfr"; ValueType: string; ValueName: ""; ValueData: "fracst.kfr"; Flags: uninsdeletevalue; Tasks: kfr
-Root: HKA; Subkey: "Software\Classes\fracst.kfr"; ValueType: string; ValueName: ""; ValueData: "fracst location"; Flags: uninsdeletekey; Tasks: kfr
+Root: HKA; Subkey: "Software\Classes\fracst.kfr"; ValueType: string; ValueName: ""; ValueData: "Fracst location"; Flags: uninsdeletekey; Tasks: kfr
 Root: HKA; Subkey: "Software\Classes\fracst.kfr\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\fracst.exe,0"; Tasks: kfr
 Root: HKA; Subkey: "Software\Classes\fracst.kfr\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\fracst.exe"" ""%1"""; Tasks: kfr
 
 [Run]
-Filename: "{app}\fracst.exe"; Description: "Launch fracst"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\fracst.exe"; Description: "Launch Fracst"; Flags: nowait postinstall skipifsilent
 
 [Code]
 // PATH lives in a different key for all-users and per-user installs.
