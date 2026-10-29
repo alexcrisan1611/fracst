@@ -141,7 +141,7 @@ fracst looks for ffmpeg in this order:
 3. One it downloaded earlier.
 4. One on the `PATH`.
 5. Where package managers put it: winget (including packages whose command
-   links are missing), Scoop, Chocolatey and `C:fmpegin` on Windows;
+   links are missing), Scoop, Chocolatey and `C:fmpegbin` on Windows;
    Homebrew, MacPorts, `/usr/local/bin`, `/usr/bin`, Snap and `~/.local/bin`
    elsewhere. Apps opened from the macOS Finder don't get Homebrew's folder
    on their `PATH`, and winget can fail to create its links, so the `PATH`
