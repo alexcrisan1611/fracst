@@ -1,0 +1,18 @@
+[package]
+name = "fracst-video"
+description = "Zoom videos for fracst: keyframes, interpolation, colour animation and ffmpeg encoding"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fracst-core.workspace = true
+fracst-remote = { path = "../fracst-remote" }
+rayon.workspace = true
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+sha2 = "0.11"
+zip = { version = "9", default-features = false, features = ["deflate"] }
