@@ -2,8 +2,9 @@
 //! deployment such as fal.ai) and render frames on it.
 
 use crate::codec;
-use crate::protocol::{ClientMsg, FrameHeader, PROTOCOL, ServerMsg};
+use crate::protocol::{ClientMsg, FEATURE_QUEUE, FrameHeader, PROTOCOL, ServerMsg};
 use fracst_core::{Frame, Progress, Settings, View};
+use std::collections::HashMap;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -27,6 +28,10 @@ pub struct Client {
     pub engine: String,
     /// The server's fracst version.
     pub version: String,
+    /// Optional abilities the server announced.
+    pub features: Vec<String>,
+    /// Errors that arrived for requests nobody was waiting on yet.
+    errors: HashMap<u64, String>,
     /// About the last frame received.
     pub last: Option<Transfer>,
 }
@@ -119,8 +124,10 @@ impl Client {
                 _ => {}
             }
         };
-        let (engine, version) = match serde_json::from_str(&hello) {
-            Ok(ServerMsg::Hello { protocol, version, engine }) if protocol == PROTOCOL => (engine, version),
+        let (engine, version, features) = match serde_json::from_str(&hello) {
+            Ok(ServerMsg::Hello { protocol, version, engine, features }) if protocol == PROTOCOL => {
+                (engine, version, features)
+            }
             Ok(ServerMsg::Hello { protocol, version, .. }) => {
                 return Err(format!("server fracst {version} speaks protocol {protocol}, this client {PROTOCOL}"));
             }
@@ -128,7 +135,7 @@ impl Client {
             _ => return Err(format!("unexpected greeting: {hello}")),
         };
         set_timeout(&mut socket, POLL).map_err(|e| e.to_string())?;
-        Ok(Client { socket, next_id: 1, skip: 0, engine, version, last: None })
+        Ok(Client { socket, next_id: 1, skip: 0, engine, version, features, errors: HashMap::new(), last: None })
     }
 
     fn send(&mut self, msg: &ClientMsg) -> Result<(), String> {
@@ -185,9 +192,33 @@ impl Client {
     /// `progress`, which also receives the server's progress reports.
     pub fn render(&mut self, view: &View, settings: &Settings, progress: &Progress) -> Result<Option<Frame>, String> {
         self.drain()?;
+        let id = self.submit(view, settings, false)?;
+        self.wait(id, progress)
+    }
+
+    /// Whether the server takes queued requests (see [`Client::submit`]).
+    pub fn can_queue(&self) -> bool {
+        self.features.iter().any(|f| f == FEATURE_QUEUE)
+    }
+
+    /// Ask for a frame without waiting for it; returns the request's id for
+    /// [`Client::wait`]. A queued request (if [`Client::can_queue`]) leaves
+    /// earlier ones running, so the server renders one frame while the last
+    /// is still on its way; otherwise it cancels them.
+    pub fn submit(&mut self, view: &View, settings: &Settings, queue: bool) -> Result<u64, String> {
         let id = self.next_id;
         self.next_id += 1;
-        self.send(&ClientMsg::Render { id, view: view.into(), settings: settings.into() })?;
+        self.send(&ClientMsg::Render { id, view: view.into(), settings: settings.into(), queue })?;
+        Ok(id)
+    }
+
+    /// Wait for the frame of request `id`, skipping frames of earlier ones.
+    /// `Ok(None)` if cancelled through `progress`, which also receives the
+    /// server's progress reports.
+    pub fn wait(&mut self, id: u64, progress: &Progress) -> Result<Option<Frame>, String> {
+        if let Some(message) = self.errors.remove(&id) {
+            return Err(message);
+        }
         let mut header: Option<FrameHeader> = None;
         let mut blocks = Vec::new();
         loop {
@@ -213,6 +244,9 @@ impl Client {
                     // A frame for an earlier, abandoned request.
                     Ok(ServerMsg::Frame(h)) => self.skip += h.blocks,
                     Ok(ServerMsg::Error { id: e, message }) if e.is_none_or(|e| e == id) => return Err(message),
+                    Ok(ServerMsg::Error { id: Some(e), message }) if e > id => {
+                        self.errors.insert(e, message);
+                    }
                     Ok(_) => {}
                     Err(e) => return Err(format!("bad message from server: {e}")),
                 },

@@ -12,14 +12,21 @@ use std::time::Duration;
 /// Bumped on incompatible changes.
 pub const PROTOCOL: u32 = 1;
 
+/// The server accepts queued render requests (see [`ClientMsg::Render`]).
+pub const FEATURE_QUEUE: &str = "queue";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMsg {
-    /// Render a frame. A newer request cancels the one in flight.
+    /// Render a frame. A newer request cancels the one in flight, unless it
+    /// is queued: then it waits its turn and frames come back in order.
+    /// Only for servers whose hello lists [`FEATURE_QUEUE`].
     Render {
         id: u64,
         view: ViewMsg,
         settings: SettingsMsg,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        queue: bool,
     },
     Cancel {
         id: u64,
@@ -34,6 +41,9 @@ pub enum ServerMsg {
         protocol: u32,
         version: String,
         engine: String,
+        /// Optional abilities, such as [`FEATURE_QUEUE`].
+        #[serde(default)]
+        features: Vec<String>,
     },
     /// From a gateway before the hello, while it gets a server ready (for
     /// example a GPU starting up). For display.
@@ -123,7 +133,7 @@ impl ViewMsg {
 }
 
 /// [`Settings`]; missing fields take their defaults.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SettingsMsg {
     pub width: u32,

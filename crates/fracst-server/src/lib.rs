@@ -3,11 +3,12 @@
 //!
 //! Each connection gets its own renderer (so its own reference orbit and
 //! BLA cache); connections share the GPU. A newer request on a connection
-//! cancels the one in flight.
+//! cancels the ones in flight, unless it is queued behind them.
 
 use fracst_core::{PixelEngine, Progress, Renderer, Settings, View};
 use fracst_remote::codec;
-use fracst_remote::protocol::{ClientMsg, FrameHeader, PROTOCOL, ServerMsg, StatsMsg};
+use fracst_remote::protocol::{ClientMsg, FEATURE_QUEUE, FrameHeader, PROTOCOL, ServerMsg, StatsMsg};
+use std::collections::VecDeque;
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
@@ -86,6 +87,7 @@ fn serve(stream: TcpStream, shared: &Config) -> Result<(), String> {
         protocol: PROTOCOL,
         version: env!("CARGO_PKG_VERSION").into(),
         engine: shared.engine_name.clone(),
+        features: vec![FEATURE_QUEUE.into()],
     };
     send(&mut socket, &hello)?;
     socket.get_mut().set_read_timeout(Some(Duration::from_millis(5))).map_err(|e| e.to_string())?;
@@ -94,8 +96,8 @@ fn serve(stream: TcpStream, shared: &Config) -> Result<(), String> {
     let (done_tx, done) = channel::<Done>();
     let engine = shared.engine.clone();
     std::thread::spawn(move || worker(job_rx, done_tx, engine));
-    // The newest request, while it is rendering.
-    let mut in_flight: Option<(u64, Arc<Progress>)> = None;
+    // Requests not yet answered, oldest (the one rendering) first.
+    let mut in_flight: VecDeque<(u64, Arc<Progress>)> = VecDeque::new();
     let mut last_progress = Instant::now();
     let mut last_request = Instant::now();
     let mut last_sent = Instant::now();
@@ -104,7 +106,7 @@ fn serve(stream: TcpStream, shared: &Config) -> Result<(), String> {
             send(&mut socket, &ServerMsg::Keepalive)?;
             last_sent = Instant::now();
         }
-        if in_flight.is_none() && shared.idle_timeout.is_some_and(|t| last_request.elapsed() > t) {
+        if in_flight.is_empty() && shared.idle_timeout.is_some_and(|t| last_request.elapsed() > t) {
             let reason = "idle for too long; reconnect to continue";
             let _ = send(&mut socket, &ServerMsg::Error { id: None, message: reason.into() });
             let close = tungstenite::protocol::CloseFrame {
@@ -118,9 +120,7 @@ fn serve(stream: TcpStream, shared: &Config) -> Result<(), String> {
         loop {
             match done.try_recv() {
                 Ok(Done::Frame(header, blocks)) => {
-                    if in_flight.as_ref().is_some_and(|(id, _)| *id == header.id) {
-                        in_flight = None;
-                    }
+                    in_flight.retain(|(id, _)| *id != header.id);
                     send(&mut socket, &ServerMsg::Frame(*header))?;
                     for block in blocks {
                         socket.send(Message::binary(block)).map_err(|e| e.to_string())?;
@@ -128,16 +128,14 @@ fn serve(stream: TcpStream, shared: &Config) -> Result<(), String> {
                     last_sent = Instant::now();
                 }
                 Ok(Done::Error(id, message)) => {
-                    if in_flight.as_ref().is_some_and(|(i, _)| *i == id) {
-                        in_flight = None;
-                    }
+                    in_flight.retain(|(i, _)| *i != id);
                     send(&mut socket, &ServerMsg::Error { id: Some(id), message })?;
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return Err("render worker stopped".into()),
             }
         }
-        if let Some((id, progress)) = &in_flight
+        if let Some((id, progress)) = in_flight.front()
             && last_progress.elapsed() >= Duration::from_millis(100)
         {
             let (stage, fraction) = progress.snapshot();
@@ -159,16 +157,18 @@ fn serve(stream: TcpStream, shared: &Config) -> Result<(), String> {
         };
         last_request = Instant::now();
         match serde_json::from_str::<ClientMsg>(&text) {
-            Ok(ClientMsg::Render { id, view, settings }) => {
-                if let Some((_, p)) = in_flight.take() {
-                    p.cancel();
+            Ok(ClientMsg::Render { id, view, settings, queue }) => {
+                if !queue {
+                    for (_, p) in in_flight.drain(..) {
+                        p.cancel();
+                    }
                 }
                 let parsed = view.to_view().and_then(|v| Ok((v, settings.to_settings(shared.max_pixels)?)));
                 match parsed {
                     Ok((mut view, settings)) => {
                         view.ensure_precision(settings.height);
                         let progress = Arc::new(Progress::default());
-                        in_flight = Some((id, progress.clone()));
+                        in_flight.push_back((id, progress.clone()));
                         last_progress = Instant::now();
                         jobs.send(Job { id, view, settings, progress }).map_err(|e| e.to_string())?;
                     }
@@ -176,27 +176,25 @@ fn serve(stream: TcpStream, shared: &Config) -> Result<(), String> {
                 }
             }
             Ok(ClientMsg::Cancel { id }) => {
-                if in_flight.as_ref().is_some_and(|(i, _)| *i == id) {
-                    in_flight.take().unwrap().1.cancel();
+                if let Some(i) = in_flight.iter().position(|(i, _)| *i == id) {
+                    in_flight.remove(i).unwrap().1.cancel();
                 }
             }
             Err(e) => send(&mut socket, &ServerMsg::Error { id: None, message: format!("bad request: {e}") })?,
         }
     }
-    if let Some((_, p)) = in_flight {
+    for (_, p) in in_flight {
         p.cancel();
     }
     Ok(())
 }
 
-/// Renders requests one at a time, skipping straight to the newest.
+/// Renders requests one at a time, in order, skipping those cancelled (by
+/// a newer request that was not queued) before their turn.
 fn worker(jobs: Receiver<Job>, done: Sender<Done>, engine: Option<Arc<dyn PixelEngine>>) {
     let mut renderer = Renderer::new();
     renderer.set_engine(engine);
-    while let Ok(mut job) = jobs.recv() {
-        while let Ok(newer) = jobs.try_recv() {
-            job = newer;
-        }
+    while let Ok(job) = jobs.recv() {
         if job.progress.cancelled() {
             continue;
         }

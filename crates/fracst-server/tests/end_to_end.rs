@@ -112,3 +112,20 @@ fn idle_connections_are_closed() {
     let err = client.render(&view, &s, &Progress::default()).unwrap_err();
     assert!(err.contains("idle"), "{err}");
 }
+
+#[test]
+fn queued_requests_come_back_in_order() {
+    let url = start(None, None);
+    let mut client = Client::connect(&url, None).unwrap();
+    assert!(client.can_queue());
+    let s = Settings { width: 96, height: 64, ..Settings::default() };
+    let views: Vec<View> = (0..4)
+        .map(|i| View { zoom: fracst_core::FloatExp::from(1.0 + i as f64), maxiter: 500, ..View::default() })
+        .collect();
+    // All requests go out before any frame is read: none may cancel another.
+    let ids: Vec<u64> = views.iter().map(|v| client.submit(v, &s, true).unwrap()).collect();
+    for (id, view) in ids.into_iter().zip(&views) {
+        let frame = client.wait(id, &Progress::default()).unwrap().unwrap();
+        assert_eq!(frame.n, local(view, &s).n);
+    }
+}

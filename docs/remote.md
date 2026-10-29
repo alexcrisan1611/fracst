@@ -282,9 +282,12 @@ Other options:
 
 JSON text messages over a WebSocket (`fracst-remote`):
 
-1. The server says hello with its engine and version.
+1. The server says hello with its engine, version and optional `features`.
 2. The client sends `render` requests, each with an id, the view and the
-   settings. A newer request, or `cancel`, stops the one in flight.
+   settings. A newer request, or `cancel`, stops the one in flight. If the
+   server lists the `queue` feature, a request sent with `"queue": true`
+   waits its turn instead, and frames come back in order. Video keyframes
+   use this, so that the GPU renders one while the last downloads.
 3. While rendering, the server reports progress, then sends a `frame`
    header followed by the frame data in binary blocks.
 4. An idle connection gets a `keepalive` every 30 seconds, so proxies keep
@@ -321,8 +324,8 @@ previews arrive 16 times faster. A lossy mode coloured on the server
   on the library path. NVRTC needs no GPU.
 - **`fracst-server`'s end-to-end tests** run a real server and client over
   a local WebSocket. They check exact frames (with the host build of the
-  kernel as the server's engine), tokens, cancellation, bad requests and
-  idle timeouts.
+  kernel as the server's engine), tokens, cancellation, queued requests,
+  bad requests and idle timeouts.
 - **The fal relay in `app.py`** was exercised under FastAPI and uvicorn
   with the real `fracst-server` behind it.
 - **The gateway** was run under `wrangler dev` (the Workers runtime, with
