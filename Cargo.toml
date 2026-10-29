@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/fracst-core", "crates/fracst-cli", "crates/fracst", "crates/fracst-cuda", "crates/fracst-remote", "crates/fracst-server", "crates/fracst-video"]
 
 [workspace.package]
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT OR Apache-2.0"
