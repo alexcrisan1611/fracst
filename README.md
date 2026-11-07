@@ -50,7 +50,11 @@ At startup the app asks GitHub for the latest release's version and, if it is
 newer, shows a link to it in the toolbar. Nothing else is sent. Turn this off
 under **App → Check for updates at startup** in the settings (or set
 `FRACST_NO_UPDATE_CHECK=1`).
-To upgrade, run the new installer over the old one; settings are kept.
+To upgrade, run the new installer over the old one; settings are kept. On
+Windows it recognises the existing install and asks only for **Update**: it
+closes Fracst, installs over it with your earlier choices, and opens it again.
+The Windows installer installs for the current user. To install for everyone,
+run it with `/ALLUSERS`.
 
 To build from source instead, install [Rust](https://rustup.rs) and run
 `cargo run --release -p fracst`.
@@ -344,10 +348,11 @@ crates/fracst-cuda   CUDA pixel engine: kernel/fracst.cuh (the pixel loop, also
 crates/fracst-remote remote protocol, lossless frame compression, client
 crates/fracst-server WebSocket render server (CUDA when available)
 crates/fracst-video  zoom videos: projects, keyframes, compositing, timeline, ffmpeg
+crates/fracst-setup  the Windows installer's screens; runs the install engine silently
 deploy/fal           container image for fracst-server, and the fal.ai app
 deploy/modal         the Modal app
 gateway              Cloudflare Worker: fracst keys, usage limits, relay to the GPU
-packaging            Windows installer (Inno Setup), Linux desktop entry and install.sh
+packaging            Windows install engine (Inno Setup), Linux desktop entry and install.sh
 docs                 performance log, remote rendering, zoom videos
 icon                 the app icon's Dials (icon.json) and the rendered icon.svg
 ```

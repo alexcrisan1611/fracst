@@ -112,11 +112,18 @@ jobs:
           mkdir "$dist"
           cp target/release/fracst.exe target/release/fracst-cli.exe target/release/fracst-server.exe README.md LICENSE-MIT LICENSE-APACHE assets/fonts/*-LICENSE.txt "$dist/"
           7z a "$dist.zip" "$dist"
-          # ...and an installer (Inno Setup comes with the runner image).
+          # ...and an installer: the Inno Setup engine, carried inside
+          # fracst-setup, which shows the screens and runs it silently. Inno
+          # Setup is pinned: the script needs 6.7, and the runner image's
+          # copy may be older.
+          choco install innosetup --version=6.7.1 --allow-downgrade -y --no-progress
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" -Q \
             "-DAppVersion=$PKG_VERSION" "-DSourceDir=$(cygpath -w "$PWD/target/release")" \
-            "-DOutputBase=fracst-$VERSION-windows-x86_64-setup" "-O$(cygpath -w "$PWD")" \
+            "-DOutputBase=fracst-engine" "-O$(cygpath -w "$RUNNER_TEMP")" \
             packaging/windows/fracst.iss
+          FRACST_SETUP_ENGINE="$(cygpath -w "$RUNNER_TEMP/fracst-engine.exe")" \
+            cargo build --release --locked -p fracst-setup
+          cp target/release/fracst-setup.exe "fracst-$VERSION-windows-x86_64-setup.exe"
 
       - name: Build and package (macOS, universal)
         if: runner.os == 'macOS'

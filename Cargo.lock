@@ -981,6 +981,7 @@ dependencies = [
  "egui-winit",
  "egui_glow",
  "egui_system_font_provider",
+ "glow",
  "glutin",
  "glutin-winit",
  "image",
@@ -1422,6 +1423,18 @@ dependencies = [
  "fracst-remote",
  "serde_json",
  "tungstenite",
+]
+
+[[package]]
+name = "fracst-setup"
+version = "0.5.0"
+dependencies = [
+ "eframe",
+ "fracst-core",
+ "raw-window-handle",
+ "rfd",
+ "windows-sys 0.61.2",
+ "winresource",
 ]
 
 [[package]]
