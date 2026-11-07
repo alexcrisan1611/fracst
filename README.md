@@ -1,4 +1,4 @@
-<img src="assets/icon.png" width="96" height="96" alt="fracst icon">
+<img src="icon/icon.svg" width="96" height="96" alt="fracst icon">
 
 # fracst
 
@@ -315,8 +315,9 @@ Not supported yet:
 - Distance-estimation colour methods.
 - Multi-colour and texture options.
 
-The icon is rendered by fracst itself:
-`cargo run --release -p fracst-core --example icon` regenerates `assets/icon.*`.
+The icon comes from `icon/icon.json` via the solar-enterprise-app-icon kit:
+its `render.ts` writes `icon/icon.svg` and `assets/icon.png`, `icon-512@2x.png`
+and `icon.ico`; `assets/icon.icns` is packed from the same renders.
 
 The screenshots are taken by the app itself. With `FRACST_SCREENSHOT=out.png`
 it saves its own window once the render settles, then exits.
@@ -331,7 +332,7 @@ recent files and remote keys stay out of the picture.
 ```
 crates/fracst-core   engine: fixed.rs (bignum), floatexp.rs + num.rs (extended range),
                      view.rs, reference.rs, bla.rs, perturb.rs, render.rs, newton.rs,
-                     colour.rs, kfr.rs, image.rs; examples bench, deepbench and icon
+                     colour.rs, kfr.rs, image.rs; examples bench and deepbench
 crates/fracst-cli    command-line renderer, and fracst-cli video
 crates/fracst        egui explorer: app.rs (canvas, toolbar, settings card),
                      app/commands.rs (every action, for the toolbar, keys and palette),
@@ -348,6 +349,7 @@ deploy/modal         the Modal app
 gateway              Cloudflare Worker: fracst keys, usage limits, relay to the GPU
 packaging            Windows installer (Inno Setup), Linux desktop entry and install.sh
 docs                 performance log, remote rendering, zoom videos
+icon                 the app icon's Dials (icon.json) and the rendered icon.svg
 ```
 
 ## Roadmap

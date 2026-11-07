@@ -251,8 +251,8 @@ major version.
   - EAS Build and EAS Update configs (`eas.json` with development, preview
     and production profiles).
   - Bundle id `io.github.alexcrisan1611.fracst`, app name "fracst".
-  - Icon and splash generated from `assets/icon.svg` (rendered by fracst
-    itself).
+  - Icon and splash generated from `icon/icon.json` with the
+    solar-enterprise-app-icon kit (add an `expo` output to it).
 - **Configuration:**
   - The default gateway comes from `EXPO_PUBLIC_FRACST_GATEWAY` at build
     time, set as an EAS environment variable.
