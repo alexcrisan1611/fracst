@@ -80,6 +80,7 @@ pub fn encode(
         crf: spec.encode.crf,
         audio,
         length: total as f64 / spec.fps,
+        background: control.background,
     };
     let mut encoder = Encoder::start(&job)?;
     for i in 0..total {

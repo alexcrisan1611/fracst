@@ -8,6 +8,7 @@
 // `!(a < b)` is used on purpose: it treats NaN as failing the comparison.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
+pub mod background;
 pub mod bla;
 pub mod colour;
 pub mod fixed;

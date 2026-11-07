@@ -40,6 +40,11 @@ Keyframe `k` is the location at zoom `Z / 2^k` (with the default factor of
 Rendering resumes from the first missing keyframe, so a job can stop for any
 reason and continue later, here or on another engine.
 
+In the app, video jobs run in the background so the computer stays usable.
+Their threads run at the lowest priority and leave one core (two logical
+CPUs) free, and ffmpeg runs below normal priority. The CLI uses every core
+at normal priority.
+
 **Estimate** (`--estimate` in the CLI) renders the next keyframe and
 multiplies its time by the number left. The deepest keyframes are usually
 the slowest, so this is an upper bound. Views that cross the edge of the

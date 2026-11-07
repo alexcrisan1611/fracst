@@ -29,9 +29,17 @@ pub enum Engine {
 pub struct Control {
     pub progress: Progress,
     pause: AtomicBool,
+    /// Run on low-priority threads that leave a core free, so the computer
+    /// stays responsive (see [`fracst_core::background`]).
+    pub background: bool,
 }
 
 impl Control {
+    /// Control for a job run in the background.
+    pub fn background() -> Self {
+        Control { background: true, ..Control::default() }
+    }
+
     /// Stop after saving what is done, to resume later.
     pub fn pause(&self) {
         self.pause.store(true, Ordering::Relaxed);
@@ -116,7 +124,7 @@ pub fn render_keyframes(
 
     match engine {
         Engine::Local => {
-            let mut renderer = Renderer::new();
+            let mut renderer = if control.background { Renderer::background() } else { Renderer::new() };
             for &k in &todo {
                 let started = Instant::now();
                 let Some(frame) = renderer.render(&view_for(k), &settings, &control.progress) else {

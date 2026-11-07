@@ -8,8 +8,8 @@
 
 use crate::theme;
 use eframe::egui::{self, ComboBox, DragValue, Slider, TextureHandle, TextureOptions};
-use fracst_core::Colouring;
 use fracst_core::kfr::Location;
+use fracst_core::{Colouring, background};
 use fracst_video::{
     Codec, ColourKey, Control, Engine, Event, Length, Outcome, Project, Quality, VideoSpec, Written, ffmpeg,
 };
@@ -355,7 +355,8 @@ impl VideoPanel {
         kind: JobKind,
         work: impl FnOnce(Arc<Control>, Arc<AtomicBool>, Sender<Msg>) + Send + 'static,
     ) {
-        let control = Arc::new(Control::default());
+        // In the background, so the explorer and the rest of the computer stay responsive.
+        let control = Arc::new(Control::background());
         let cancel = Arc::new(AtomicBool::new(false));
         let (c, k, tx, ctx) = (control.clone(), cancel.clone(), self.tx.clone(), self.ctx.clone());
         let progress_at_start = self.project.as_ref().map_or(0, |p| p.keyframes_done());
@@ -363,7 +364,12 @@ impl VideoPanel {
             .name("fracst-video".into())
             .spawn(move || {
                 let notify = Notifier { tx, ctx };
-                let pool = rayon::ThreadPoolBuilder::new().thread_name(|i| format!("fracst-video-{i}")).build();
+                background::lower_thread_priority();
+                let pool = rayon::ThreadPoolBuilder::new()
+                    .num_threads(background::threads())
+                    .thread_name(|i| format!("fracst-video-{i}"))
+                    .start_handler(|_| background::lower_thread_priority())
+                    .build();
                 match pool {
                     Ok(pool) => pool.install(|| work(c, k, notify.tx.clone())),
                     Err(e) => notify.send(Msg::Done(Err(e.to_string()))),

@@ -400,6 +400,21 @@ impl Renderer {
         Renderer { reference: None, bla: None, pool: Arc::new(pool), engine: None }
     }
 
+    /// A renderer for background jobs: its threads run at a low priority and
+    /// leave a core free (see [`crate::background`]).
+    pub fn background() -> Self {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(crate::background::threads())
+            .thread_name(|i| format!("fracst-bg-{i}"))
+            .start_handler(|_| {
+                flush_subnormals();
+                crate::background::lower_thread_priority();
+            })
+            .build()
+            .expect("render thread pool");
+        Renderer { reference: None, bla: None, pool: Arc::new(pool), engine: None }
+    }
+
     pub fn reference(&self) -> Option<&Arc<Reference>> {
         self.reference.as_ref()
     }

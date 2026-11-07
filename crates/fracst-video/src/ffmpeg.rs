@@ -136,6 +136,29 @@ fn command(exe: &Path) -> Command {
     cmd
 }
 
+/// Start the command below normal priority. Does nothing on platforms
+/// other than Windows and Unix.
+fn lower_priority(cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
+        cmd.creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: nice() is a single system call, safe between fork and exec.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::nice(10);
+                Ok(())
+            });
+        }
+    }
+}
+
 fn works(exe: &Path) -> bool {
     command(exe)
         .arg("-version")
@@ -389,6 +412,8 @@ pub struct EncodeJob<'a> {
     pub audio: Option<(&'a Path, f64)>,
     /// The video's length in seconds.
     pub length: f64,
+    /// Run ffmpeg below normal priority.
+    pub background: bool,
 }
 
 /// A running ffmpeg taking RGB frames on its input. Frames are written from
@@ -460,7 +485,11 @@ impl Encoder {
         }
         args.push(job.output.to_string_lossy().into_owned());
 
-        let mut child = command(job.ffmpeg)
+        let mut cmd = command(job.ffmpeg);
+        if job.background {
+            lower_priority(&mut cmd);
+        }
+        let mut child = cmd
             .args(&args)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
