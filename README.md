@@ -1,4 +1,4 @@
-<img src="icon/icon.svg" width="96" height="96" alt="fracst icon">
+<img src="icon.svg" width="96" height="96" alt="fracst icon">
 
 # fracst
 
@@ -319,9 +319,9 @@ Not supported yet:
 - Distance-estimation colour methods.
 - Multi-colour and texture options.
 
-The icon comes from `icon/icon.json` via the solar-enterprise-app-icon kit:
-its `render.ts` writes `icon/icon.svg` and `assets/icon.png`, `icon-512@2x.png`
-and `icon.ico`; `assets/icon.icns` is packed from the same renders.
+The icon is `icon.svg`, which holds its own Dials. The solar-enterprise-app-icon
+kit's `render.ts`, run from the repo root, redraws it and writes `assets/icon.png`
+and `assets/icon.ico`; `assets/icon.icns` is packed separately from the same picture.
 
 The screenshots are taken by the app itself. With `FRACST_SCREENSHOT=out.png`
 it saves its own window once the render settles, then exits.
@@ -354,7 +354,7 @@ deploy/modal         the Modal app
 gateway              Cloudflare Worker: fracst keys, usage limits, relay to the GPU
 packaging            Windows install engine (Inno Setup), Linux desktop entry and install.sh
 docs                 performance log, remote rendering, zoom videos
-icon                 the app icon's Dials (icon.json) and the rendered icon.svg
+icon.svg             the app icon, with its Dials inside
 ```
 
 ## Roadmap
